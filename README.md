@@ -48,6 +48,29 @@ Restart Discord, then enable **VcQuickKick** and **VcTagger** in *Settings → V
 
 Defaults use the `.v` prefix. If your server's bot uses something else (`!v`, `-vc`…), either just use any command once and it will be detected, or set it in **shield button → Server commands**. You can also change individual command words there.
 
+## Security: what these plugins can and can't do
+
+The repo is **source code only**: two small `.tsx` files and two `.css` files, no `.exe`, no `.dll`, no scripts, no minified or obfuscated code. You build it yourself with Vencord, so what you read is what runs.
+
+| | |
+|---|---|
+| **Network** | Only Discord's own API, through Vencord's built-in Discord client. No `fetch`, no WebSockets, no outside servers, no analytics. |
+| **Discord API calls** | `GET /guilds/{id}/application-command-index` (list a server's bot slash commands) · `PATCH /guilds/{id}/members/{id}` (server mute/deafen, only when you click it and Discord allows it) · `GET /users/@me/notes/{id}` (read *your own* note on a user, VcTagger) |
+| **Messages** | Only the VC commands you trigger (e.g. `.v reject <id>`) and the permit ping, sent in your current VC chat |
+| **Storage** | Vencord's local plugin settings + DataStore (your tags, "meets" count). Nothing leaves your PC. |
+| **Your computer** | No file system access, no `eval`, no dynamic imports, no native code, no `child_process` |
+| **Your account** | Never reads or touches your token, password or email |
+
+**Check it yourself** in the repo folder. Each command should find nothing:
+
+```bash
+grep -rnE "fetch\(|XMLHttpRequest|WebSocket|eval\(|new Function|import\(|require\(|child_process|VencordNative|localStorage|token" vcQuickKick vcTagger
+```
+```bash
+grep -rnoE "https?://[^\"' ]+" vcQuickKick vcTagger
+```
+The second one only shows `cdn.discordapp.com` (Discord's default avatars).
+
 ## Notes
 
 - Effects are client-side: only you see the buttons, everyone sees the normal bot commands.
