@@ -1,0 +1,184 @@
+.vc-quickkick-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    margin-right: 5px;
+    border-radius: 4px;
+    background: rgb(237 66 69 / 20%);
+    color: #ed4245;
+    font-size: 10px;
+    font-weight: 900;
+    line-height: 1;
+    cursor: pointer;
+    vertical-align: middle;
+}
+
+.vc-quickkick-btn:hover {
+    background: #ed4245;
+    color: #fff;
+}
+
+.vc-quickkick-log {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 0;
+}
+
+.vc-quickkick-log-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-default, #dbdee1);
+    font-size: 14px;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border-subtle, rgb(255 255 255 / 6%));
+}
+
+.vc-quickkick-in { color: #23a55a; font-weight: 600; }
+.vc-quickkick-out { color: #949ba4; font-weight: 600; }
+.vc-quickkick-log-time { color: #949ba4; font-size: 12px; }
+.vc-quickkick-log-name { font-weight: 600; }
+.vc-quickkick-log-meta { color: #949ba4; font-size: 12px; }
+
+.vc-quickkick-log-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    object-fit: cover;
+}
+
+.vc-quickkick-log-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.vc-quickkick-log-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.vc-quickkick-pager {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 0 4px;
+    color: var(--text-default, #dbdee1);
+    font-size: 13px;
+}
+
+.vc-quickkick-pager button {
+    background: var(--background-modifier-accent, rgb(255 255 255 / 8%));
+    color: inherit;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+}
+
+.vc-quickkick-pager button:hover:not(:disabled) { background: #5865f2; color: #fff; }
+.vc-quickkick-pager button:disabled { opacity: .4; cursor: default; }
+
+.vc-quickkick-bulk { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; color: var(--text-default, #dbdee1); }
+.vc-quickkick-bulk-tools { display: flex; gap: 8px; margin-bottom: 4px; }
+
+.vc-quickkick-bulk-tools button {
+    background: var(--background-modifier-accent, rgb(255 255 255 / 8%));
+    color: inherit;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+}
+
+.vc-quickkick-bulk-tools button:hover { background: #5865f2; color: #fff; }
+
+.vc-quickkick-bulk-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 6px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.vc-quickkick-bulk-row:hover { background: var(--background-modifier-hover, rgb(255 255 255 / 4%)); }
+.vc-quickkick-bulk-row input { width: 16px; height: 16px; cursor: pointer; }
+
+.vc-quickkick-bulk-extra {
+    min-height: 60px;
+    resize: vertical;
+    padding: 8px;
+    border-radius: 6px;
+    border: none;
+    background: var(--input-background, rgb(0 0 0 / 30%));
+    color: inherit;
+    font-family: inherit;
+}
+
+/* ✕ on the big call cards */
+.vc-quickkick-tile-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    background: rgb(0 0 0 / 55%);
+    color: #ed4245;
+    font-size: 11px;
+    font-weight: 900;
+    cursor: pointer;
+    opacity: .75;
+    transition: opacity .15s, background .15s, color .15s, transform .15s;
+}
+
+[data-selenium-video-tile]:hover > .vc-quickkick-tile-btn { opacity: 1; }
+
+.vc-quickkick-tile-btn:hover {
+    background: #ed4245;
+    color: #fff;
+    transform: scale(1.1);
+}
+
+/* per-server command setup */
+.vc-quickkick-srv { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; color: var(--text-default, #dbdee1); }
+
+.vc-quickkick-srv-row {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+}
+
+.vc-quickkick-srv-detect {
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: rgb(88 101 242 / 15%);
+    font-size: 13px;
+}
+
+.vc-quickkick-srv-bots { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #b5bac1; }
+
+.vc-quickkick-srv-bots code {
+    display: inline-block;
+    margin: 2px 4px 0 0;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: rgb(0 0 0 / 30%);
+}
+
