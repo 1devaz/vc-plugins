@@ -35,7 +35,7 @@ You need [Git](https://git-scm.com/), [Node.js](https://nodejs.org/) and [pnpm](
 git clone https://github.com/Vendicated/Vencord
 cd Vencord
 pnpm install
-git clone <this repo url> src/userplugins/vc-plugins
+git clone https://github.com/1devaz/vc-plugins src/userplugins/vc-plugins
 pnpm build
 pnpm inject
 ```
