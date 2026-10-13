@@ -21,6 +21,11 @@ import {
 } from "@webpack/common";
 
 const logger = new Logger("VcQuickKick");
+/** deep plain copy: settings.store hands out live proxies, and proxies can't be saved to disk ("could not be cloned") */
+const plain = <T,>(v: T): T => JSON.parse(JSON.stringify(v ?? {}));
+
+/** Discord's newer TextInput sometimes calls onChange with an event instead of the text */
+const inputText = (v: any): string => typeof v === "string" ? v : v?.currentTarget?.value ?? v?.target?.value ?? "";
 
 // ---------- settings ----------
 
@@ -52,7 +57,7 @@ const settings = definePluginSettings({
     },
     tileButton: {
         type: OptionType.BOOLEAN,
-        description: "Also show the ✕ button on the big video/avatar cards in the call view",
+        description: "Show the ✕ button in the corner of each member square (the big cards in the call view)",
         default: true
     },
     alsoTag: {
@@ -161,7 +166,7 @@ function learnPrefix(message: any) {
     if (!cand || cand.until < Date.now()) return;
     candidates.delete(message.channel_id);
 
-    const all = { ...settings.store.serverCommands };
+    const all: Record<string, ServerConfig> = plain(settings.store.serverCommands);
     const cfg: ServerConfig = all[guildId] ?? {};
     if (cfg.detected === cand.prefix && cfg.detectedBot === message.author.id) return;
     all[guildId] = { ...cfg, detected: cand.prefix, detectedBot: message.author.id };
@@ -221,7 +226,7 @@ function noteRemoved(kind: "kick" | "reject", id: string, tag: boolean) {
     if (tag && settings.store.alsoTag) {
         const s = Vencord.Settings.plugins.VcTagger;
         if (Vencord.Plugins.plugins.VcTagger?.started && !s.tags?.[id])
-            s.tags = { ...s.tags, [id]: { label: kind === "kick" ? "KICKED" : "REJECTED", date: Date.now() } };
+            s.tags = { ...plain(s.tags), [id]: { label: kind === "kick" ? "KICKED" : "REJECTED", date: Date.now() } };
     }
 }
 
@@ -502,13 +507,19 @@ function ServerCommandsModal({ modalProps, guildId }: { modalProps: RenderModalP
     const detectedBotName = saved.detectedBot && displayName(UserStore.getUser(saved.detectedBot), "a bot");
 
     const save = () => {
-        const commands = Object.fromEntries(Object.entries(cmds).filter(([, v]) => v.trim()));
-        const all = { ...settings.store.serverCommands };
-        const next: ServerConfig = { ...all[guildId], prefix: prefix.trim() || undefined, commands };
-        if (!next.prefix && !Object.keys(commands).length && !next.detected) delete all[guildId];
-        else all[guildId] = next;
-        settings.store.serverCommands = all;
-        showToast(`Saved commands for ${guildName}`, "success");
+        try {
+            const commands = Object.fromEntries(Object.entries(cmds).map(([k, v]) => [k, inputText(v).trim()]).filter(([, v]) => v));
+            const all: Record<string, ServerConfig> = plain(settings.store.serverCommands);
+            const cleanPrefix = inputText(prefix).trim();
+            const next: ServerConfig = { ...all[guildId], prefix: cleanPrefix || undefined, commands };
+            if (!next.prefix && !Object.keys(commands).length && !next.detected) delete all[guildId];
+            else all[guildId] = next;
+            settings.store.serverCommands = all;
+            showToast(`Saved commands for ${guildName}`, "success");
+        } catch (e) {
+            logger.error("saving server commands failed", e);
+            showToast("Couldn't save, see console (Ctrl+Shift+I)", "failure");
+        }
         modalProps.onClose();
     };
 
@@ -532,14 +543,14 @@ function ServerCommandsModal({ modalProps, guildId }: { modalProps: RenderModalP
                         </div>
                     )}
                 <Text variant="text-sm/normal" style={{ marginTop: 6 }}>Prefix override (empty = {saved.detected ? "detected" : "default"} <b>{saved.detected || settings.store.defaultPrefix || ".v"}</b>), e.g. <b>!v</b>, <b>-v</b>, <b>.vc</b></Text>
-                <TextInput value={prefix} onChange={setPrefix} placeholder={saved.detected || settings.store.defaultPrefix || ".v"} />
+                <TextInput value={prefix} onChange={v => setPrefix(inputText(v))} placeholder={saved.detected || settings.store.defaultPrefix || ".v"} />
                 <Text variant="text-sm/normal" style={{ marginTop: 10 }}>Only fill these if this server's bot uses different words. Empty = default shown in grey. Use <b>{"{id}"}</b> for the user ID, <b>{"{text}"}</b> for name/limit.</Text>
                 {COMMAND_KEYS.map(({ key, label }) => (
                     <div key={key} className="vc-quickkick-srv-row">
                         <span>{label}</span>
                         <TextInput
                             value={cmds[key] ?? ""}
-                            onChange={v => setCmds(c => ({ ...c, [key]: v }))}
+                            onChange={v => setCmds(c => ({ ...c, [key]: inputText(v) }))}
                             placeholder={(settings.store[`${key}Command`] as string).replace(/^(\{p\}|\.v)(?=\s|$)/, usedPrefix)}
                         />
                     </div>
@@ -559,11 +570,16 @@ function openServerCommands() {
 
 function PromptModal({ modalProps, title, placeholder, onSubmit }: { modalProps: RenderModalProps; title: string; placeholder: string; onSubmit(v: string): void; }) {
     const [value, setValue] = useState("");
-    const submit = () => { if (value.trim()) { onSubmit(value.trim()); modalProps.onClose(); } };
+    const submit = () => {
+        const v = inputText(value).trim();
+        if (!v) return showToast("Type something first", "failure");
+        onSubmit(v);
+        modalProps.onClose();
+    };
     return (
         <Modal {...modalProps} title={title} actions={[{ text: "Send", variant: "primary", onClick: submit }]}>
             <div style={{ padding: "8px 0" }} onKeyDown={e => e.key === "Enter" && submit()}>
-                <TextInput value={value} onChange={setValue} placeholder={placeholder} autoFocus />
+                <TextInput value={value} onChange={v => setValue(inputText(v))} placeholder={placeholder} autoFocus />
             </div>
         </Modal>
     );

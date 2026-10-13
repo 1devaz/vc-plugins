@@ -17,6 +17,11 @@ import { findStoreLazy } from "@webpack";
 import { Menu, Modal, openModal, RestAPI, SelectedChannelStore, showToast, Text, TextInput, Tooltip, UserStore, useState,VoiceStateStore } from "@webpack/common";
 
 const logger = new Logger("VcTagger");
+/** deep plain copy: settings.store hands out live proxies, and proxies can't be saved to disk ("could not be cloned") */
+const plain = <T,>(v: T): T => JSON.parse(JSON.stringify(v ?? {}));
+
+/** Discord's newer TextInput sometimes calls onChange with an event instead of the text */
+const inputText = (v: any): string => typeof v === "string" ? v : v?.currentTarget?.value ?? v?.target?.value ?? "";
 const NoteStore = findStoreLazy("NoteStore");
 
 interface Tag {
@@ -64,12 +69,12 @@ function getManualTag(userId: string): Tag | undefined {
 }
 
 function setTag(userId: string, label: string, note?: string) {
-    settings.store.tags = { ...settings.store.tags, [userId]: { label, note: note || undefined, date: Date.now() } };
+    settings.store.tags = { ...plain(settings.store.tags), [userId]: { label, note: note || undefined, date: Date.now() } };
     scheduleTileScan();
 }
 
 function removeTag(userId: string) {
-    const { [userId]: _, ...rest } = settings.store.tags;
+    const { [userId]: _, ...rest } = plain(settings.store.tags);
     settings.store.tags = rest;
     scheduleTileScan();
 }
@@ -154,26 +159,32 @@ function TagModal({ user, modalProps }: { user: User; modalProps: RenderModalPro
     const [note, setNote] = useState(existing?.note ?? "");
 
     const save = () => {
-        if (!label.trim()) return;
-        setTag(user.id, label.trim(), note.trim());
-        showToast(`Tagged ${user.username}`, "success");
+        const l = inputText(label).trim();
+        if (!l) return showToast("Type a tag first", "failure");
+        try {
+            setTag(user.id, l, inputText(note).trim());
+            showToast(`Tagged ${(user as any).globalName ?? user.username} as ${l}`, "success");
+        } catch (e) {
+            logger.error("saving tag failed", e);
+            showToast("Couldn't save the tag, see console (Ctrl+Shift+I)", "failure");
+        }
         modalProps.onClose();
     };
 
-    const actions: any[] = [{ text: "Save", variant: "brand", onClick: save }];
+    const actions: any[] = [{ text: "Save", variant: "primary", onClick: save }];
     if (existing) actions.push({
         text: "Remove tag",
         variant: "critical-secondary",
-        onClick: () => { removeTag(user.id); modalProps.onClose(); }
+        onClick: () => { removeTag(user.id); showToast("Tag removed", "success"); modalProps.onClose(); }
     });
 
     return (
         <Modal {...modalProps} title={`Tag ${(user as any).globalName ?? user.username}`} actions={actions}>
             <div className="vc-vctagger-modal">
                 <Text variant="text-sm/semibold">Tag (shown next to their name)</Text>
-                <TextInput value={label} onChange={setLabel} placeholder="KICKED ME" autoFocus />
+                <TextInput value={label} onChange={v => setLabel(inputText(v))} placeholder="KICKED ME" autoFocus />
                 <Text variant="text-sm/semibold">Details (optional, shown on hover)</Text>
-                <TextInput value={note} onChange={setNote} placeholder="e.g. kicked me from Gaming VC on 10/09" />
+                <TextInput value={note} onChange={v => setNote(inputText(v))} placeholder="e.g. kicked me from Gaming VC on 10/09" />
             </div>
         </Modal>
     );

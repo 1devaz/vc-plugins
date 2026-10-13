@@ -1,9 +1,10 @@
 # VC Plugins for Vencord
 
-Two plugins for Discord (through [Vencord](https://github.com/Vendicated/Vencord)) that make managing your temp voice channel easy. No more typing `.v reject 123456789…` by hand.
+Three plugins for Discord (through [Vencord](https://github.com/Vendicated/Vencord)) that make managing your temp voice channel easy. No more typing `.v reject 123456789…` by hand.
 
 - **VcQuickKick**: one-click kick / reject / permit, bulk actions, co-owner and a VC control panel
 - **VcTagger**: tag people (e.g. "KICKED ME") and see the tag next to their name. Tagged people get rejected automatically when they join your VC
+- **SafeSend**: protect your own messages: self-destruct timer, send text as an image, edit warning, delete all your messages in a chat
 
 ![Call view](screenshots/call-view.png)
 ![VC control panel](screenshots/control-panel.png)
@@ -35,6 +36,18 @@ Two plugins for Discord (through [Vencord](https://github.com/Vendicated/Vencord
 | **"Meets" counter** | Hover the **✕** to see how many times you've been in a VC with someone |
 
 Your own command messages (`.v reject …`) are deleted automatically after 2 seconds, so the chat stays clean.
+
+### SafeSend (🔒 lock button in every chat bar)
+
+| Feature | How |
+|---|---|
+| **Self-destruct** | 🔒 → pick 10s / 1m / 5m / 1h. Every message you send deletes itself after that time. The lock turns yellow while it's on |
+| **Send as image** | 🔒 → **🖼️ Send as image…**. Your text becomes a picture. Message loggers only keep a *link* to images, so once you delete it, it stops loading for them |
+| **Edit warning** | Editing a message asks first, because loggers keep every edit. Choose **Delete + resend** or **Edit anyway** |
+| **Delete all my messages** | 🔒 → **🗑️ Delete all my messages here**. Deletes only *yours* in that chat (VC chats too), about 1 per second. Click again to stop |
+| **Delete everyone's messages** | 🔒 → **🧨 Delete ALL messages here**. Only shows if you have **Manage Messages** in that chat. Shows in the server's audit log |
+
+> No plugin can erase what someone already saw, logged or screenshotted. SafeSend just keeps that window as small as possible.
 
 ---
 
@@ -97,7 +110,7 @@ pnpm inject
 
 1. **Fully close Discord** (right-click the Discord icon near the clock → **Quit Discord**) and open it again
 2. Open **User Settings** (⚙ bottom-left) → **Vencord** → **Plugins**
-3. Search **VcQuickKick** and switch it on, then **VcTagger**, and switch it on
+3. Search **VcQuickKick**, **VcTagger** and **SafeSend** and switch each one on
 4. Done 🎉 Join a VC and you'll see the **✕** buttons and the **shield** button in the chat bar
 
 ---
@@ -178,13 +191,13 @@ pnpm uninject
 
 ## Security: what these plugins can and can't do
 
-The repo is **source code only**: two small `.tsx` files and two `.css` files, no `.exe`, no `.dll`, no scripts, no minified or obfuscated code. You build it yourself with Vencord, so what you read is what runs. GitHub's CodeQL scanner also checks the code automatically (see the **Security** tab).
+The repo is **source code only**: three small `.tsx` files and three `.css` files, no `.exe`, no `.dll`, no scripts, no minified or obfuscated code. You build it yourself with Vencord, so what you read is what runs. GitHub's CodeQL scanner also checks the code automatically (see the **Security** tab).
 
 | | |
 |---|---|
 | **Network** | Only Discord's own API, through Vencord's built-in Discord client. No `fetch`, no WebSockets, no outside servers, no analytics |
-| **Discord API calls** | `GET /guilds/{id}/application-command-index` (list a server's bot slash commands) · `PATCH /guilds/{id}/members/{id}` (server mute/deafen, only when you click it and Discord allows it) · `GET /users/@me/notes/{id}` (read *your own* note on a user, VcTagger) |
-| **Messages** | Only the VC commands you trigger (e.g. `.v reject <id>`) and the permit ping, sent in your current VC chat |
+| **Discord API calls** | `GET /guilds/{id}/application-command-index` (list a server's bot slash commands) · `PATCH /guilds/{id}/members/{id}` (server mute/deafen, only when you click it and Discord allows it) · `GET /users/@me/notes/{id}` (read *your own* note on a user, VcTagger) · `GET /channels/{id}/messages` and message search (SafeSend: find the messages to delete) · `DELETE` messages (SafeSend, only when you start it) |
+| **Messages** | Only the VC commands you trigger (e.g. `.v reject <id>`), the permit ping, and the image / resend you choose in SafeSend |
 | **Storage** | Vencord's local plugin settings + DataStore (your tags, "meets" count). Nothing leaves your PC |
 | **Your computer** | No file system access, no `eval`, no dynamic imports, no native code, no `child_process` |
 | **Your account** | Never reads or touches your token, password or email |
@@ -192,10 +205,10 @@ The repo is **source code only**: two small `.tsx` files and two `.css` files, n
 **Check it yourself** in the repo folder. Each command should find nothing:
 
 ```bash
-grep -rnE "fetch\(|XMLHttpRequest|WebSocket|eval\(|new Function|import\(|require\(|child_process|VencordNative|localStorage|token" vcQuickKick vcTagger
+grep -rnE "fetch\(|XMLHttpRequest|WebSocket|eval\(|new Function|import\(|require\(|child_process|VencordNative|localStorage|token" vcQuickKick vcTagger safeSend
 ```
 ```bash
-grep -rnoE "https?://[^\"' ]+" vcQuickKick vcTagger
+grep -rnoE "https?://[^\"' ]+" vcQuickKick vcTagger safeSend
 ```
 The second one only shows `cdn.discordapp.com` (Discord's default avatars).
 
