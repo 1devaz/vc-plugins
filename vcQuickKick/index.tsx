@@ -188,22 +188,23 @@ const displayName = (user?: User | null, fallback = "?") => (user as any)?.globa
 
 /** userId -> time, people you kicked/rejected this session (newest last) */
 const removed = new Map<string, { kind: "kick" | "reject"; time: number; }>();
-/** userIds you permitted this session — auto-reject skips them */
-const permitted = new Set<string>();
+/** userId -> when you permitted them. Auto-reject skips them unless they were tagged AFTER that */
+const permitted = new Map<string, number>();
 
-function permitId(id: string) {
+function permitId(id: string): boolean {
     const template = getCommand("permit");
-    if (!sendCommand(template.replaceAll("{id}", id))) return;
+    if (!sendCommand(template.replaceAll("{id}", id))) return false;
     removed.delete(id);
-    permitted.add(id);
+    permitted.set(id, Date.now());
     const msg = (settings.store.permitMessage as string)?.trim();
     const channelId = SelectedChannelStore.getVoiceChannelId();
     if (msg && channelId) setTimeout(() => sendMessage(channelId, { content: msg.replaceAll("{id}", id) }), 800);
     showToast(`Permitted ${displayName(UserStore.getUser(id), id)}`, "success");
+    return true;
 }
 
 function runUserAction(kind: UserAction, user: User, auto = false) {
-    if (kind === "permit") return permitId(user.id);
+    if (kind === "permit") { permitId(user.id); return; }
     const template = getCommand(kind);
     if (!sendCommand(template.replaceAll("{id}", user.id))) return;
     if (kind === "kick" || kind === "reject") noteRemoved(kind, user.id, !auto);
@@ -369,48 +370,84 @@ async function runBulk(kind: "kick" | "reject", ids: string[]) {
     }
 }
 
+async function runBulkPermit(ids: string[]) {
+    if (bulkRunning) return showToast("A bulk action is already running", "failure");
+    bulkRunning = true;
+    try {
+        // the bot only takes one ID per permit, so one command each
+        for (let i = 0; i < ids.length; i++) {
+            if (!permitId(ids[i])) return;
+            if (i < ids.length - 1) await sleep(Math.max(0.5, settings.store.bulkDelay) * 1000);
+        }
+        showToast(`Permitted ${ids.length} user${ids.length === 1 ? "" : "s"}`, "success");
+    } finally {
+        bulkRunning = false;
+    }
+}
+
 function BulkModal({ modalProps }: { modalProps: RenderModalProps; }) {
     const me = UserStore.getCurrentUser()?.id;
     const myChan = useStateFromStores([SelectedChannelStore], () => SelectedChannelStore.getVoiceChannelId());
     const inVcKey = useStateFromStores([VoiceStateStore], () => Object.keys((myChan && VoiceStateStore.getVoiceStatesForChannel(myChan)) ?? {}).filter(id => id !== me).join(","), [myChan]);
     const inVc = inVcKey ? inVcKey.split(",") : [];
+    const recent = [...removed.keys()].reverse().filter(id => !inVc.includes(id));
     const [picked, setPicked] = useState<Set<string>>(new Set());
     const [extra, setExtra] = useState("");
 
     const extraIds = [...new Set(extra.match(/\d{15,21}/g) ?? [])].filter(id => id !== me);
-    const ids = [...new Set([...inVc.filter(id => picked.has(id)), ...extraIds])];
+    const ids = [...new Set([...inVc, ...recent].filter(id => picked.has(id)).concat(extraIds))];
     const flip = (id: string) => setPicked(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
-    const go = (kind: "kick" | "reject") => { if (!ids.length) return; modalProps.onClose(); runBulk(kind, ids); };
+    const go = (kind: "kick" | "reject" | "permit") => {
+        if (!ids.length) return;
+        modalProps.onClose();
+        kind === "permit" ? runBulkPermit(ids) : runBulk(kind, ids);
+    };
+    const row = (id: string, note?: string) => (
+        <label key={id} className="vc-quickkick-bulk-row">
+            <input type="checkbox" checked={picked.has(id)} onChange={() => flip(id)} />
+            <img className="vc-quickkick-log-avatar" src={avatarUrl(id)} alt="" />
+            <span className="vc-quickkick-log-name">{displayName(UserStore.getUser(id), id)}</span>
+            <span className="vc-quickkick-log-meta">{note ?? id}</span>
+        </label>
+    );
 
     return (
         <Modal
             {...modalProps}
-            title={`Bulk kick / reject (${ids.length} selected)`}
+            title={`Bulk kick / reject / permit (${ids.length} selected)`}
             size="md"
             actions={[
                 { text: `Reject ${ids.length}`, variant: "critical-primary", onClick: () => go("reject"), disabled: !ids.length },
-                { text: `Kick ${ids.length}`, variant: "secondary", onClick: () => go("kick"), disabled: !ids.length }
+                { text: `Kick ${ids.length}`, variant: "secondary", onClick: () => go("kick"), disabled: !ids.length },
+                { text: `Permit ${ids.length}`, variant: "primary", onClick: () => go("permit"), disabled: !ids.length }
             ] as any}
         >
             <div className="vc-quickkick-bulk">
+                <Text variant="text-sm/semibold">In your VC</Text>
                 {inVc.length === 0
                     ? <Text variant="text-md/normal">Nobody else is in your VC.</Text>
                     : (
                         <>
                             <div className="vc-quickkick-bulk-tools">
-                                <button onClick={() => setPicked(new Set(inVc))}>Select all</button>
-                                <button onClick={() => setPicked(new Set())}>Clear</button>
+                                <button onClick={() => setPicked(p => new Set([...p, ...inVc]))}>Select all</button>
+                                <button onClick={() => setPicked(p => new Set([...p].filter(id => !inVc.includes(id))))}>Clear</button>
                             </div>
-                            {inVc.map(id => (
-                                <label key={id} className="vc-quickkick-bulk-row">
-                                    <input type="checkbox" checked={picked.has(id)} onChange={() => flip(id)} />
-                                    <img className="vc-quickkick-log-avatar" src={avatarUrl(id)} alt="" />
-                                    <span className="vc-quickkick-log-name">{displayName(UserStore.getUser(id), id)}</span>
-                                    <span className="vc-quickkick-log-meta">{id}</span>
-                                </label>
-                            ))}
+                            {inVc.map(id => row(id))}
                         </>
                     )}
+                {recent.length > 0 && (
+                    <>
+                        <Text variant="text-sm/semibold" style={{ marginTop: 10 }}>Recently removed (for permit)</Text>
+                        <div className="vc-quickkick-bulk-tools">
+                            <button onClick={() => setPicked(p => new Set([...p, ...recent]))}>Select all</button>
+                            <button onClick={() => setPicked(p => new Set([...p].filter(id => !recent.includes(id))))}>Clear</button>
+                        </div>
+                        {recent.map(id => {
+                            const rm = removed.get(id)!;
+                            return row(id, `${rm.kind === "kick" ? "kicked" : "rejected"} ${new Date(rm.time).toLocaleTimeString()}`);
+                        })}
+                    </>
+                )}
                 <Text variant="text-sm/normal" style={{ marginTop: 8 }}>Extra user IDs or @mentions (people not in the VC):</Text>
                 <textarea className="vc-quickkick-bulk-extra" value={extra} onChange={e => setExtra(e.currentTarget.value)} placeholder={"123456789012345678\n<@987654321098765432>"} />
             </div>
@@ -712,7 +749,7 @@ function openPanel(e: React.MouseEvent) {
                 {item("limit", "👥 User limit…", () => prompt("User limit", "e.g. 5 (0 = no limit)", v => runChannelAction("limit", v)))}
             </Menu.MenuGroup>
             <Menu.MenuGroup>
-                {item("bulk", "🧹 Bulk kick / reject…", () => openModal(p => <ErrorBoundary><BulkModal modalProps={p} /></ErrorBoundary>))}
+                {item("bulk", "🧹 Bulk kick / reject / permit…", () => openModal(p => <ErrorBoundary><BulkModal modalProps={p} /></ErrorBoundary>))}
                 {item("cowner", "👑 Add co-owner…", () => prompt("Add co-owner", "User ID or @mention", v => {
                     const id = v.match(/\d{15,21}/)?.[0];
                     if (!id) return showToast("That's not a user ID", "failure");
@@ -764,11 +801,13 @@ async function maybeAutoReject(userId: string, channelId: string) {
     const tagger = Vencord.Plugins.plugins.VcTagger as any;
     if (!tagger?.started) return;
     if (settings.store.autoRejectOnlyWhenOwner && !iOwnThisVc(channelId)) return;
-    if (permitted.has(userId)) return;
     if ((autoRejectCooldown.get(userId) ?? 0) > Date.now()) return;
 
     const tag = await tagger.getTagAsync(userId);
     if (!tag) return;
+    // you permitted them after they were tagged -> let them in; tagged again after the permit -> reject
+    const permittedAt = permitted.get(userId);
+    if (permittedAt && (tag.date ?? 0) < permittedAt) return;
     // still in my VC?
     if (SelectedChannelStore.getVoiceChannelId() !== channelId) return;
     if (!VoiceStateStore.getVoiceStatesForChannel(channelId)?.[userId]) return;
