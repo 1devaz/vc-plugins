@@ -56,6 +56,16 @@ Your own command messages (`.v reject …`) are deleted automatically after 2 se
 > ⏱ About 10 minutes the first time. You only do this once.
 > 💻 These steps are for **Windows**. Mac/Linux work the same way in a terminal.
 
+### First, read this — it saves confusion
+
+These are **custom plugins**. They do **not** work with the normal "one-click" Vencord that most people install. Custom plugins only work in a Vencord that is **built from the source code** (the steps below do that).
+
+- **I don't have Vencord yet** → just follow Steps 1–4 below. That's everything.
+- **I already have Vencord** (installed the normal way) → you still follow the **same** Steps 1–4. It replaces your current Vencord with a source build, **and keeps all your settings** (your enabled plugins, themes, everything stay). Nothing is lost.
+- **I already build Vencord from source** → skip to the short list at the bottom: [Already build from source?](#already-build-from-source)
+
+So in almost every case: **follow Steps 1–4.** Having Vencord already doesn't change the steps, it just means your old settings carry over.
+
 ### Step 1: Install 3 free programs
 
 Download and install these, clicking **Next** through each installer with the default options:
@@ -104,7 +114,7 @@ pnpm inject
 
 `pnpm inject` opens a small installer: choose your Discord (usually **Stable**) and press **Install / Patch**.
 
-> Already use the normal Vencord installer? That's fine: this replaces it with your own build, and your Vencord settings stay.
+> **Already had Vencord?** This is the step that swaps it for your source build. Your settings, themes and the plugins you already use are untouched — they're stored separately. If it asks to uninstall the old one first, say yes, then run `pnpm inject` again.
 
 ### Step 4: Turn the plugins on
 
@@ -112,6 +122,22 @@ pnpm inject
 2. Open **User Settings** (⚙ bottom-left) → **Vencord** → **Plugins**
 3. Search **VcQuickKick**, **VcTagger** and **SafeSend** and switch each one on
 4. Done 🎉 Join a VC and you'll see the **✕** buttons and the **shield** button in the chat bar
+
+### Already build from source?
+
+If you already run Vencord from a source clone, you don't need any of the above. Just add the plugins and rebuild:
+
+```bash
+cd <your Vencord folder>
+```
+```bash
+git clone https://github.com/1devaz/vc-plugins src/userplugins/vc-plugins
+```
+```bash
+pnpm build
+```
+
+Restart Discord, then enable **VcQuickKick**, **VcTagger** and **SafeSend** in Settings → Vencord → Plugins.
 
 ---
 
