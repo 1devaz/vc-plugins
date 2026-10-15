@@ -14,7 +14,9 @@ import { Logger } from "@utils/Logger";
 import definePlugin, { OptionType } from "@utils/types";
 import type { RenderModalProps, User } from "@vencord/discord-types";
 import { findStoreLazy } from "@webpack";
-import { Menu, Modal, openModal, RestAPI, SelectedChannelStore, showToast, Text, TextInput, Tooltip, UserStore, useState,VoiceStateStore } from "@webpack/common";
+import { Menu, openModal, RestAPI, SelectedChannelStore, showToast, Tooltip, UserStore, useState, VoiceStateStore } from "@webpack/common";
+
+import { Modal, Text, TextInput } from "./ui";
 
 const logger = new Logger("VcTagger");
 /** deep plain copy: settings.store hands out live proxies, and proxies can't be saved to disk ("could not be cloned") */

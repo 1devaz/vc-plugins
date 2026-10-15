@@ -8,15 +8,15 @@ import "./style.css";
 
 import { ChatBarButton, ChatBarButtonFactory } from "@api/ChatButtons";
 import { definePluginSettings } from "@api/Settings";
-import ErrorBoundary from "@components/ErrorBoundary";
 import { sendMessage } from "@utils/discord";
 import { Logger } from "@utils/Logger";
 import definePlugin, { IconProps, OptionType } from "@utils/types";
-import type { RenderModalProps } from "@vencord/discord-types";
 import {
-    Alerts, ChannelStore, ContextMenuApi, DraftType, FluxDispatcher, Menu, MessageActions, Modal, openModal, RestAPI,
-    PermissionsBits, PermissionStore, SelectedChannelStore, showToast, Text, UploadHandler, UserStore, useState
+    ChannelStore, FluxDispatcher, MessageActions, PermissionsBits, PermissionStore, Popout, RestAPI,
+    SelectedChannelStore, showToast, UserStore, useRef, useState
 } from "@webpack/common";
+
+import { confirmDialog } from "./ui";
 
 const logger = new Logger("SafeSend");
 
@@ -38,14 +38,6 @@ const settings = definePluginSettings({
         type: OptionType.BOOLEAN,
         description: "Warn before editing a message (edits are kept by message loggers) and offer delete + resend instead",
         default: true
-    },
-    imageTheme: {
-        type: OptionType.SELECT,
-        description: "Colors for 'Send as image'",
-        options: [
-            { label: "Dark", value: "dark", default: true },
-            { label: "Light", value: "light" }
-        ]
     }
 });
 
@@ -70,86 +62,6 @@ function onMessageCreate({ message, optimistic }: { message: any; optimistic?: b
 function clearPending() {
     pending.forEach(t => clearTimeout(t));
     pending.clear();
-}
-
-// ---------- send as image ----------
-
-function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
-    const out: string[] = [];
-    for (const para of text.split("\n")) {
-        let line = "";
-        for (const word of para.split(/(\s+)/)) {
-            const next = line + word;
-            if (ctx.measureText(next).width > maxWidth && line.trim()) {
-                out.push(line.trimEnd());
-                line = word.trimStart();
-            } else line = next;
-        }
-        out.push(line);
-    }
-    return out;
-}
-
-async function textToPng(text: string): Promise<File> {
-    const dark = settings.store.imageTheme !== "light";
-    const font = "500 22px 'gg sans', 'Noto Sans', 'Segoe UI', sans-serif";
-    const pad = 28, lineH = 32, maxW = 640;
-
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d")!;
-    ctx.font = font;
-    const lines = wrapLines(ctx, text, maxW);
-    const width = Math.min(maxW, Math.max(...lines.map(l => ctx.measureText(l).width))) + pad * 2;
-
-    const scale = 2; // sharp on high-dpi screens
-    canvas.width = Math.ceil(width * scale);
-    canvas.height = Math.ceil((lines.length * lineH + pad * 2 - 8) * scale);
-    ctx.scale(scale, scale);
-    ctx.fillStyle = dark ? "#2b2d31" : "#ffffff";
-    ctx.beginPath();
-    ctx.roundRect(0, 0, canvas.width / scale, canvas.height / scale, 16);
-    ctx.fill();
-    ctx.font = font;
-    ctx.fillStyle = dark ? "#f2f3f5" : "#1e1f22";
-    ctx.textBaseline = "top";
-    lines.forEach((l, i) => ctx.fillText(l, pad, pad + i * lineH));
-
-    const blob = await new Promise<Blob>((res, rej) => canvas.toBlob(b => (b ? res(b) : rej(new Error("toBlob failed"))), "image/png"));
-    return new File([blob], "message.png", { type: "image/png" });
-}
-
-function ImageModal({ modalProps, channelId }: { modalProps: RenderModalProps; channelId: string; }) {
-    const [text, setText] = useState("");
-    const submit = async () => {
-        if (!text.trim()) return;
-        try {
-            const file = await textToPng(text.trim());
-            UploadHandler.promptToUpload([file], ChannelStore.getChannel(channelId), DraftType.ChannelMessage);
-            modalProps.onClose();
-            showToast("Image added: press Enter to send it", "success");
-        } catch (e) {
-            logger.error("image failed", e);
-            showToast("Couldn't make the image", "failure");
-        }
-    };
-    return (
-        <Modal {...modalProps} title="Send as image" actions={[{ text: "Make image", variant: "primary", onClick: submit }]}>
-            <div className="vc-safesend-body">
-                <Text variant="text-sm/normal">
-                    Message loggers keep text forever, but images only as a link. Once you delete an image, Discord removes the file and it stops loading for them
-                    (unless they already opened it).
-                </Text>
-                <textarea
-                    className="vc-safesend-textarea"
-                    value={text}
-                    autoFocus
-                    onChange={e => setText(e.currentTarget.value)}
-                    onKeyDown={e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submit(); }}
-                    placeholder="Type your message… (Ctrl+Enter to make the image)"
-                />
-            </div>
-        </Modal>
-    );
 }
 
 // ---------- delete all my messages in a channel ----------
@@ -241,25 +153,25 @@ function confirmDeleteEveryone(channelId: string) {
     const ch = ChannelStore.getChannel(channelId) as any;
     const where = ch?.name ? `#${ch.name}` : "this chat";
     if (!canDeleteOthers(channelId)) return showToast("You don't have Manage Messages here, Discord won't allow it", "failure");
-    Alerts.show({
+    confirmDialog({
         title: `Delete EVERY message in ${where}?`,
         body: `All messages from everyone in ${where} will be deleted, about 1 per second in the background. This can't be undone.`,
         confirmText: "Delete everything",
-        cancelText: "Cancel",
+        danger: true,
         onConfirm: () => { showToast(`Deleting all messages in ${where}…`, "message"); deleteAllMine(channelId, true); }
-    } as any);
+    });
 }
 
 function confirmDeleteAll(channelId: string) {
     const ch = ChannelStore.getChannel(channelId) as any;
     const where = ch?.name ? `#${ch.name}` : "this DM";
-    Alerts.show({
+    confirmDialog({
         title: "Delete ALL your messages?",
         body: `Every message you ever sent in ${where} will be deleted (about 1 per second, keeps going in the background). Other people's messages are not touched. This can't be undone.`,
         confirmText: "Delete all",
-        cancelText: "Cancel",
+        danger: true,
         onConfirm: () => { showToast(`Deleting all your messages in ${where}…`, "message"); deleteAllMine(channelId); }
-    } as any);
+    });
 }
 
 // ---------- edit warning ----------
@@ -267,7 +179,7 @@ function confirmDeleteAll(channelId: string) {
 function confirmEdit(channelId: string, messageId: string, content: string): Promise<boolean> {
     // resolves true = cancel the edit
     return new Promise(resolve => {
-        Alerts.show({
+        confirmDialog({
             title: "Edits are logged",
             body: "People using a message logger keep the original text and every edit. Delete the message and send the new text as a fresh one instead?",
             confirmText: "Delete + resend",
@@ -277,72 +189,117 @@ function confirmEdit(channelId: string, messageId: string, content: string): Pro
                 sendMessage(channelId, { content });
                 resolve(true);
             },
-            onCancel: () => resolve(false),
-            onCloseCallback: () => resolve(false)
-        } as any);
+            onCancel: () => resolve(false)
+        });
     });
 }
 
 // ---------- chat bar button ----------
 
-function LockIcon({ height = 20, width = 20, className }: IconProps) {
+function LockIcon({ height = 24, width = 24, className }: IconProps) {
+    // speech bubble with a padlock inside
     return (
-        <svg width={width} height={height} viewBox="0 0 24 24" className={className}>
-            <path fill="currentColor" d="M17 9V7A5 5 0 0 0 7 7v2a3 3 0 0 0-3 3v7a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-7a3 3 0 0 0-3-3ZM9 7a3 3 0 0 1 6 0v2H9V7Zm4 10.73V19h-2v-1.27a2 2 0 1 1 2 0Z" />
+        <svg width={width} height={height} viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"
+            className={(className ? className + " " : "") + "vc-safesend-icon"}>
+            <path className="vc-safesend-bubble" d="M21 10.9a8.4 8.4 0 0 1-9 8.4 8.7 8.7 0 0 1-3.7-.9L3 20l1.7-5.3A8.4 8.4 0 0 1 4 11a8.4 8.4 0 0 1 8.4-8.4h.4A8.4 8.4 0 0 1 21 10.6v.3Z" />
+            <g className="vc-safesend-lock">
+                <rect x="8.3" y="10.8" width="7.4" height="5.6" rx="1.2" />
+                <path d="M9.9 10.8V9a2.1 2.1 0 0 1 4.2 0v1.8" />
+            </g>
         </svg>
     );
 }
 
-function openMenu(e: React.MouseEvent, channelId: string) {
-    ContextMenuApi.openContextMenu(e as any, () => (
-        <Menu.Menu navId="vc-safesend" onClose={ContextMenuApi.closeContextMenu} aria-label="SafeSend">
-            <Menu.MenuGroup label="Self-destruct my messages">
+const SS_ICONS: Record<string, string[]> = {
+    off: ["M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z", "M5.6 5.6l12.8 12.8"],
+    timer: ["M12 21a8 8 0 1 0 0-16 8 8 0 0 0 0 16z", "M12 9v4l2.5 1.5", "M9 2h6"],
+    trash: ["M3 6h18", "M8 6V4h8v2", "M6 6l1 14h10l1-14", "M10 11v5M14 11v5"],
+    bomb: ["M11 22a7 7 0 1 0 0-14 7 7 0 0 0 0 14z", "M15 9l2.5-2.5", "M19 3l1 1M21 7h-1M17 2v1"],
+    stop: ["M6 6h12v12H6z"]
+};
+
+function SsIcon({ name }: { name: string; }) {
+    return (
+        <svg viewBox="0 0 24 24" width={20} height={20} fill="none" stroke="currentColor"
+            strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+            {SS_ICONS[name].map((d, i) => <path key={i} d={d} />)}
+        </svg>
+    );
+}
+
+function SafeSendPanel({ channelId, close }: { channelId: string; close: () => void; }) {
+    const { timer } = settings.use(["timer"]);
+    const [, force] = useState(0);
+    const setTimer = (t: { value: number; label: string; }) => {
+        settings.store.timer = t.value;
+        showToast(t.value ? `Self-destruct on: ${t.label}` : "Self-destruct off", "success");
+    };
+    const short = (v: number) => (v === 0 ? "Off" : timerLabel(v));
+
+    return (
+        <div className="vc-ss-popout" role="menu">
+            <div className="vc-ss-title">Self-destruct my messages</div>
+            <div className="vc-ss-timers">
                 {TIMERS.map(t => (
-                    <Menu.MenuRadioItem
-                        key={t.value}
-                        id={`vc-safesend-t-${t.value}`}
-                        group="vc-safesend-timer"
-                        label={t.label}
-                        checked={settings.store.timer === t.value}
-                        action={() => {
-                            settings.store.timer = t.value;
-                            showToast(t.value ? `Self-destruct on: ${t.label}` : "Self-destruct off", "success");
-                        }}
-                    />
+                    <button key={t.value} className={"vc-ss-tool" + (timer === t.value ? " vc-ss-active" : "")} onClick={() => setTimer(t)}>
+                        <SsIcon name={t.value ? "timer" : "off"} />
+                        <span>{short(t.value)}</span>
+                    </button>
                 ))}
-            </Menu.MenuGroup>
-            <Menu.MenuGroup>
-                <Menu.MenuItem id="vc-safesend-image" label="🖼️ Send as image…" action={() => openModal(p => <ErrorBoundary><ImageModal modalProps={p} channelId={channelId} /></ErrorBoundary>)} />
+            </div>
+            <div className="vc-ss-sep" />
+            <div className="vc-ss-grid">
                 {deleting
-                    ? <Menu.MenuItem id="vc-safesend-stop" label="⏹ Stop deleting" color="danger" action={() => { stopRequested = true; }} />
+                    ? <button className="vc-ss-tool vc-ss-danger" onClick={() => { stopRequested = true; force(x => x + 1); }}>
+                        <SsIcon name="stop" /><span>Stop deleting</span>
+                    </button>
                     : <>
-                        <Menu.MenuItem id="vc-safesend-delete" label="🗑️ Delete all my messages here" color="danger" action={() => confirmDeleteAll(channelId)} />
+                        <button className="vc-ss-tool vc-ss-danger" onClick={() => { close(); confirmDeleteAll(channelId); }}>
+                            <SsIcon name="trash" /><span>Delete my messages</span>
+                        </button>
                         {canDeleteOthers(channelId) && (
-                            <Menu.MenuItem id="vc-safesend-delete-all" label="🧨 Delete ALL messages here (everyone's)" color="danger" action={() => confirmDeleteEveryone(channelId)} />
+                            <button className="vc-ss-tool vc-ss-danger" onClick={() => { close(); confirmDeleteEveryone(channelId); }}>
+                                <SsIcon name="bomb" /><span>Delete ALL messages</span>
+                            </button>
                         )}
                     </>}
-            </Menu.MenuGroup>
-        </Menu.Menu>
-    ));
+            </div>
+        </div>
+    );
 }
 
 const SafeSendButton: ChatBarButtonFactory = ({ channel }) => {
     const { timer } = settings.use(["timer"]);
+    const buttonRef = useRef(null);
+    const [show, setShow] = useState(false);
     if (!channel) return null;
-    const open = (e: React.MouseEvent) => openMenu(e, channel.id);
     return (
-        <ChatBarButton tooltip={timer ? `SafeSend: self-destruct ${TIMERS.find(t => t.value === timer)?.label}` : "SafeSend"} onClick={open} onContextMenu={open}>
-            <span className={`vc-safesend-btn${timer ? " vc-safesend-on" : ""}`}>
-                <LockIcon />
-                {timer ? <span className="vc-safesend-badge">{timerLabel(timer)}</span> : null}
-            </span>
-        </ChatBarButton>
+        <Popout
+            position="top"
+            align="right"
+            animation={Popout.Animation.SCALE}
+            spacing={8}
+            shouldShow={show}
+            onRequestClose={() => setShow(false)}
+            targetElementRef={buttonRef}
+            renderPopout={({ closePopout }) => <SafeSendPanel channelId={channel.id} close={closePopout} />}
+        >
+            {() => (
+                <ChatBarButton tooltip={timer ? `SafeSend: self-destruct ${TIMERS.find(t => t.value === timer)?.label}` : "SafeSend"} onClick={() => setShow(v => !v)}>
+                    <span ref={buttonRef} className={`vc-safesend-btn${timer ? " vc-safesend-on" : ""}`}>
+                        <LockIcon />
+                        {timer ? <span className="vc-safesend-badge">{timerLabel(timer)}</span> : null}
+                    </span>
+                </ChatBarButton>
+            )}
+        </Popout>
     );
 };
 
 export default definePlugin({
     name: "SafeSend",
-    description: "Protect your own messages: self-destruct timer, send text as an image, warn before edits, delete all your messages in a channel",
+    description: "Protect your own messages: self-destruct timer, warn before edits, delete all your messages in a channel",
     authors: [{ name: "you", id: 0n }],
     settings,
 

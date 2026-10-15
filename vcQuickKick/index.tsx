@@ -11,14 +11,16 @@ import { NavContextMenuPatchCallback } from "@api/ContextMenu";
 import * as DataStore from "@api/DataStore";
 import { definePluginSettings } from "@api/Settings";
 import ErrorBoundary from "@components/ErrorBoundary";
-import { sendMessage } from "@utils/discord";
+import { insertTextIntoChatInputBox, sendMessage } from "@utils/discord";
 import { Logger } from "@utils/Logger";
 import definePlugin, { IconProps, OptionType } from "@utils/types";
 import type { RenderModalProps, User } from "@vencord/discord-types";
 import {
-    ChannelStore, ContextMenuApi, GuildStore, FluxDispatcher, Menu, MessageActions, Modal, openModal, PermissionsBits, PermissionStore, RestAPI, SelectedChannelStore,
-    showToast, Text, TextInput, Tooltip, UserStore, useEffect, useState, useStateFromStores, VoiceStateStore
+    ChannelStore, ContextMenuApi, GuildStore, FluxDispatcher, Menu, MessageActions, openModal, PermissionsBits, PermissionStore, Popout, RestAPI, SelectedChannelStore,
+    showToast, Tooltip, UserStore, useEffect, useRef, useState, useStateFromStores, VoiceStateStore
 } from "@webpack/common";
+
+import { Modal, Text, TextInput } from "./ui";
 
 const logger = new Logger("VcQuickKick");
 /** deep plain copy: settings.store hands out live proxies, and proxies can't be saved to disk ("could not be cloned") */
@@ -149,11 +151,18 @@ const VC_VERBS = "kick|reject|permit|lock|unlock|hide|unhide|claim|unclaim|limit
 const CANDIDATE_RE = new RegExp(`^(\\S{1,6})\\s+(?:${VC_VERBS})\\b`, "i");
 /** channelId -> candidate prefix waiting for a bot reply */
 const candidates = new Map<string, { prefix: string; until: number; }>();
+/** guilds we've already shown a "Detected …" toast for this session (belt-and-braces against repeats) */
+const notifiedGuilds = new Set<string>();
 
 function learnPrefix(message: any) {
     const channel = ChannelStore.getChannel(message.channel_id);
     const guildId = channel?.guild_id;
     if (!guildId) return;
+
+    // Already know this server's prefix (set by you, or detected before — even in a past session)?
+    // Then stop: no more detecting, no more toasts. This is what prevents the repeating notification.
+    const existing: ServerConfig | undefined = settings.store.serverCommands?.[guildId];
+    if (existing?.prefix || existing?.detected) return;
 
     if (!message.author?.bot) {
         const prefix = message.content?.match(CANDIDATE_RE)?.[1];
@@ -167,12 +176,13 @@ function learnPrefix(message: any) {
     candidates.delete(message.channel_id);
 
     const all: Record<string, ServerConfig> = plain(settings.store.serverCommands);
-    const cfg: ServerConfig = all[guildId] ?? {};
-    if (cfg.detected === cand.prefix && cfg.detectedBot === message.author.id) return;
-    all[guildId] = { ...cfg, detected: cand.prefix, detectedBot: message.author.id };
+    all[guildId] = { ...(all[guildId] ?? {}), detected: cand.prefix, detectedBot: message.author.id };
     settings.store.serverCommands = all;
 
-    if (!cfg.prefix) showToast(`Detected ${cand.prefix} as the VC bot prefix for ${GuildStore.getGuild(guildId)?.name ?? "this server"}`, "success");
+    if (!notifiedGuilds.has(guildId)) {
+        notifiedGuilds.add(guildId);
+        showToast(`Detected ${cand.prefix} as the VC bot prefix for ${GuildStore.getGuild(guildId)?.name ?? "this server"} — change it in ⚙️ Server commands if wrong`, "success");
+    }
 }
 
 function onMessageCreate({ message, optimistic }: { message: any; optimistic?: boolean; }) {
@@ -331,7 +341,18 @@ function JoinLogModal({ modalProps }: { modalProps: RenderModalProps; }) {
                                                 {tag && <span className="vc-vctagger-badge vc-vctagger-compact">⚠ {tag.label}</span>}
                                                 <span className="vc-quickkick-log-time">{new Date(e.time).toLocaleTimeString()}</span>
                                             </div>
-                                            <span className="vc-quickkick-log-meta">{e.channel} · {e.userId}</span>
+                                            <span className="vc-quickkick-log-meta">
+                                                {e.channel} ·{" "}
+                                                <span
+                                                    className="vc-quickkick-log-id"
+                                                    title="Click to mention them in the chat box"
+                                                    onClick={() => {
+                                                        insertTextIntoChatInputBox(`<@${e.userId}> `);
+                                                        modalProps.onClose();
+                                                        showToast(`Added @${displayName(u, e.userId)} to the chat box`, "success");
+                                                    }}
+                                                >{e.userId}</span>
+                                            </span>
                                         </div>
                                     </div>
                                 );
@@ -741,70 +762,109 @@ function stopTiles() {
 
 // ---------- VC control panel in the chat bar (#3) ----------
 
-function ShieldIcon({ height = 20, width = 20, className }: IconProps) {
+// managing / mixer icon for the chat-bar button
+function ShieldIcon({ height = 22, width = 22, className }: IconProps) {
     return (
-        <svg width={width} height={height} viewBox="0 0 24 24" className={className}>
-            <path fill="currentColor" d="M12 2 4 5v6c0 5 3.4 9.7 8 11 4.6-1.3 8-6 8-11V5l-8-3Zm0 5a2.5 2.5 0 0 1 1 4.8V15h-2v-3.2A2.5 2.5 0 0 1 12 7Z" />
+        <svg width={width} height={height} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round"
+            className={(className ? className + " " : "") + "vc-qk-ctrl-icon"}>
+            <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" />
         </svg>
     );
 }
 
-function openPanel(e: React.MouseEvent) {
-    const item = (id: string, label: string, action: () => void) => <Menu.MenuItem id={`vc-quickkick-p-${id}`} label={label} action={action} />;
-    ContextMenuApi.openContextMenu(e as any, () => (
-        <Menu.Menu navId="vc-quickkick-panel" onClose={ContextMenuApi.closeContextMenu} aria-label="VC control panel">
-            <Menu.MenuGroup label="Voice channel">
-                {item("lock", "🔒 Lock", () => runChannelAction("lock"))}
-                {item("unlock", "🔓 Unlock", () => runChannelAction("unlock"))}
-                {item("hide", "🙈 Hide", () => runChannelAction("hide"))}
-                {item("unhide", "👁 Unhide", () => runChannelAction("unhide"))}
-                {item("claim", "👑 Claim", () => runChannelAction("claim"))}
-            </Menu.MenuGroup>
-            <Menu.MenuGroup>
-                {item("name", "✏️ Rename…", () => prompt("Rename VC", "GIRLS ONLY", v => runChannelAction("name", v)))}
-                {item("limit", "👥 User limit…", () => prompt("User limit", "e.g. 5 (0 = no limit)", v => runChannelAction("limit", v)))}
-            </Menu.MenuGroup>
-            <Menu.MenuGroup>
-                {item("bulk", "🧹 Bulk kick / reject / permit…", () => openModal(p => <ErrorBoundary><BulkModal modalProps={p} /></ErrorBoundary>))}
-                {item("cowner", "👑 Add co-owner…", () => prompt("Add co-owner", "User ID or @mention", v => {
-                    const id = v.match(/\d{15,21}/)?.[0];
-                    if (!id) return showToast("That's not a user ID", "failure");
-                    runUserAction("cowner", UserStore.getUser(id) ?? ({ id, username: id } as any as User));
-                }))}
-            </Menu.MenuGroup>
-            <Menu.MenuGroup>
-                {item("permit", "✅ Permit user ID…", () => prompt("Permit user", "User ID or @mention", v => {
-                    const id = v.match(/\d{15,21}/)?.[0];
-                    id ? permitId(id) : showToast("That's not a user ID", "failure");
-                }))}
-                {removed.size > 0 && (
-                    <Menu.MenuItem id="vc-quickkick-p-recent" label="✅ Permit recently removed">
-                        {[...removed].reverse().map(([id, r]) => (
-                            <Menu.MenuItem
-                                key={id}
-                                id={`vc-quickkick-p-recent-${id}`}
-                                label={`${displayName(UserStore.getUser(id), id)} (${r.kind === "kick" ? "kicked" : "rejected"} ${new Date(r.time).toLocaleTimeString()})`}
-                                action={() => permitId(id)}
-                            />
-                        ))}
-                    </Menu.MenuItem>
-                )}
-            </Menu.MenuGroup>
-            <Menu.MenuGroup>
-                {item("servercmds", "⚙️ Server commands…", openServerCommands)}
-                {item("log", "📜 Join log", () => openModal(p => <ErrorBoundary><JoinLogModal modalProps={p} /></ErrorBoundary>))}
-            </Menu.MenuGroup>
-        </Menu.Menu>
-    ));
+// ---------- horizontal VC control panel ----------
+
+const PANEL_ICONS: Record<string, string[]> = {
+    lock: ["M6 11h12v9H6z", "M8 11V8a4 4 0 0 1 8 0v3"],
+    unlock: ["M6 11h12v9H6z", "M8 11V8a4 4 0 0 1 7-2.6"],
+    hide: ["M3 3l18 18", "M10.6 10.6a2 2 0 0 0 2.8 2.8", "M9.9 5.2A9 9 0 0 1 21 12a9.3 9.3 0 0 1-2.2 3M6.6 6.6A9 9 0 0 0 3 12s3 6 9 6a8.6 8.6 0 0 0 2.3-.3"],
+    unhide: ["M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z", "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"],
+    claim: ["M4 7l4 5 4-7 4 7 4-5v10H4z"],
+    rename: ["M12 20h9", "M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"],
+    limit: ["M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2", "M9.5 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z", "M22 21v-2a4 4 0 0 0-3-3.9"],
+    bulk: ["M3 6h18", "M8 6V4h8v2", "M6 6l1 14h10l1-14"],
+    cowner: ["M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z", "M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2", "M19 8v6M22 11h-6"],
+    permit: ["M9 12l2 2 4-4", "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"],
+    recent: ["M3 12a9 9 0 1 0 3-6.7L3 8", "M3 3v5h5", "M12 8v4l3 2"],
+    gear: ["M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z", "M19.4 13.5a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1v.2a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H23a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"],
+    log: ["M8 6h13M8 12h13M8 18h13", "M3 6h.01M3 12h.01M3 18h.01"]
+};
+
+function PanelIcon({ name }: { name: string; }) {
+    return (
+        <svg viewBox="0 0 24 24" width={22} height={22} fill="none" stroke="currentColor"
+            strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+            {PANEL_ICONS[name].map((d, i) => <path key={i} d={d} />)}
+        </svg>
+    );
+}
+
+type Tool = { icon: string; name: string; keep?: boolean; run(close: () => void): void; };
+
+function VcPanelContent({ close }: { close: () => void; }) {
+
+    const tools: Tool[] = [
+        { icon: "lock", name: "Lock", keep: true, run: () => runChannelAction("lock") },
+        { icon: "unlock", name: "Unlock", keep: true, run: () => runChannelAction("unlock") },
+        { icon: "hide", name: "Hide", keep: true, run: () => runChannelAction("hide") },
+        { icon: "unhide", name: "Unhide", keep: true, run: () => runChannelAction("unhide") },
+        { icon: "claim", name: "Claim", keep: true, run: () => runChannelAction("claim") },
+        { icon: "rename", name: "Rename", run: c => { c(); prompt("Rename VC", "GIRLS ONLY", v => runChannelAction("name", v)); } },
+        { icon: "limit", name: "User limit", run: c => { c(); prompt("User limit", "e.g. 5 (0 = no limit)", v => runChannelAction("limit", v)); } },
+        { icon: "bulk", name: "Bulk kick / reject / permit", run: c => { c(); openModal(p => <ErrorBoundary><BulkModal modalProps={p} /></ErrorBoundary>); } },
+        { icon: "cowner", name: "Add co-owner", run: c => { c(); prompt("Add co-owner", "User ID or @mention", v => {
+            const id = v.match(/\d{15,21}/)?.[0];
+            if (!id) return showToast("That's not a user ID", "failure");
+            runUserAction("cowner", UserStore.getUser(id) ?? ({ id, username: id } as any as User));
+        }); } },
+        { icon: "permit", name: "Permit by ID", run: c => { c(); prompt("Permit user", "User ID or @mention", v => {
+            const id = v.match(/\d{15,21}/)?.[0];
+            id ? permitId(id) : showToast("That's not a user ID", "failure");
+        }); } },
+        ...(removed.size > 0 ? [{ icon: "recent", name: "Permit recently removed", run: (c: () => void) => { c(); openModal(p => <ErrorBoundary><BulkModal modalProps={p} /></ErrorBoundary>); } }] : []),
+        { icon: "gear", name: "Server commands", run: c => { c(); openServerCommands(); } },
+        { icon: "log", name: "Join log", run: c => { c(); openModal(p => <ErrorBoundary><JoinLogModal modalProps={p} /></ErrorBoundary>); } }
+    ];
+
+    return (
+        <div className="vc-qk-popout" role="menu">
+            {tools.map(t => (
+                <button
+                    key={t.icon}
+                    className="vc-qk-tool"
+                    onClick={() => { t.run(close); close(); }}
+                >
+                    <PanelIcon name={t.icon} />
+                    <span>{t.name}</span>
+                </button>
+            ))}
+        </div>
+    );
 }
 
 const PanelButton: ChatBarButtonFactory = ({ channel }) => {
     const myChan = useStateFromStores([SelectedChannelStore], () => SelectedChannelStore.getVoiceChannelId());
+    const buttonRef = useRef(null);
+    const [show, setShow] = useState(false);
     if (!channel || channel.id !== myChan) return null;
     return (
-        <ChatBarButton tooltip="VC controls" onClick={openPanel} onContextMenu={openPanel}>
-            <ShieldIcon />
-        </ChatBarButton>
+        <Popout
+            position="top"
+            align="right"
+            animation={Popout.Animation.SCALE}
+            spacing={8}
+            shouldShow={show}
+            onRequestClose={() => setShow(false)}
+            targetElementRef={buttonRef}
+            renderPopout={({ closePopout }) => <ErrorBoundary><VcPanelContent close={closePopout} /></ErrorBoundary>}
+        >
+            {() => (
+                <ChatBarButton tooltip="VC controls" onClick={() => setShow(v => !v)}>
+                    <span ref={buttonRef} className="vc-qk-ctrl-btn"><ShieldIcon /></span>
+                </ChatBarButton>
+            )}
+        </Popout>
     );
 };
 
@@ -910,6 +970,7 @@ export default definePlugin({
         if (seenDirty) DataStore.set(SEEN_KEY, seen);
         pendingDeletes.clear();
         candidates.clear();
+        notifiedGuilds.clear();
         removed.clear();
         permitted.clear();
     },

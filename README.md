@@ -1,13 +1,18 @@
 # VC Plugins for Vencord
 
-Three plugins for Discord (through [Vencord](https://github.com/Vendicated/Vencord)) that make managing your temp voice channel easy. No more typing `.v reject 123456789…` by hand.
+Four plugins for Discord (through [Vencord](https://github.com/Vendicated/Vencord)) that make managing your temp voice channel easy. No more typing `.v reject 123456789…` by hand.
 
 - **VcQuickKick**: one-click kick / reject / permit, bulk actions, co-owner and a VC control panel
 - **VcTagger**: tag people (e.g. "KICKED ME") and see the tag next to their name. Tagged people get rejected automatically when they join your VC
-- **SafeSend**: protect your own messages: self-destruct timer, send text as an image, edit warning, delete all your messages in a chat
+- **SafeSend**: protect your own messages: self-destruct timer, edit warning, delete all your messages in a chat
+- **ColorText**: write colored / rainbow text that everyone sees, or send it as an image so phones see the colors too
+
+All four use the same clean look: a black panel that opens right above its button in the chat bar (like Discord's emoji picker), with white icons that animate when you hover them.
 
 ![Call view](screenshots/call-view.png)
-![VC control panel](screenshots/control-panel.png)
+![VC controls](screenshots/vc-controls.png)
+![SafeSend](screenshots/safesend.png)
+![ColorText](screenshots/colortext.png)
 
 ---
 
@@ -28,26 +33,34 @@ Three plugins for Discord (through [Vencord](https://github.com/Vendicated/Venco
 |---|---|
 | **Reject / kick someone** | Click the red **✕** next to their name in the voice list, or in the corner of their card in the call |
 | **More actions** | Right-click the **✕**, or right-click the person anywhere → **VC actions**: reject, kick, text mute/unmute, permit, add co-owner, force mute/deafen |
-| **Bulk reject / kick / permit** | Shield button → **🧹 Bulk kick / reject / permit…**, tick people, press a button |
-| **Let someone back in** | Shield button → **✅ Permit user ID…** or **✅ Permit recently removed**. They get pinged so they know they can rejoin |
-| **Lock / hide / claim / rename / limit** | Shield button in the chat bar of your VC |
+| **Bulk reject / kick / permit** | VC controls (sliders icon) → **Bulk kick / reject / permit**, tick people, press a button |
+| **Let someone back in** | VC controls (sliders icon) → **Permit by ID** or **Permit recently removed**. They get pinged so they know they can rejoin |
+| **Lock / hide / claim / rename / limit** | The **sliders icon** in your VC's chat bar opens the VC controls panel. Click any tool and it runs |
 | **Auto-reject people you don't want** | Tag them with VcTagger. Next time they join your VC, they're rejected automatically |
-| **Join log** | Shield button → **📜 Join log**: who joined/left, with avatars and pages |
+| **Join log** | VC controls (sliders icon) → **Join log**: who joined/left, with avatars and pages. Click someone's user ID to put `@them` in the chat box |
 | **"Meets" counter** | Hover the **✕** to see how many times you've been in a VC with someone |
 
 Your own command messages (`.v reject …`) are deleted automatically after 2 seconds, so the chat stays clean.
 
-### SafeSend (🔒 lock button in every chat bar)
+### SafeSend (speech bubble with a lock, in every chat bar)
 
 | Feature | How |
 |---|---|
-| **Self-destruct** | 🔒 → pick 10s / 1m / 5m / 1h. Every message you send deletes itself after that time. The lock turns yellow while it's on |
-| **Send as image** | 🔒 → **🖼️ Send as image…**. Your text becomes a picture. Message loggers only keep a *link* to images, so once you delete it, it stops loading for them |
+| **Self-destruct** | Pick **Off / 10s / 1m / 5m / 1h**. Every message you send deletes itself after that time. The icon turns yellow while it's on |
 | **Edit warning** | Editing a message asks first, because loggers keep every edit. Choose **Delete + resend** or **Edit anyway** |
-| **Delete all my messages** | 🔒 → **🗑️ Delete all my messages here**. Deletes only *yours* in that chat (VC chats too), about 1 per second. Click again to stop |
-| **Delete everyone's messages** | 🔒 → **🧨 Delete ALL messages here**. Only shows if you have **Manage Messages** in that chat. Shows in the server's audit log |
+| **Delete my messages** | Deletes only *yours* in that chat (VC chats too), about 1 per second. Click **Stop deleting** to stop |
+| **Delete ALL messages** | Only shows if you have **Manage Messages** in that chat. Shows in the server's audit log |
 
 > No plugin can erase what someone already saw, logged or screenshotted. SafeSend just keeps that window as small as possible.
+
+### ColorText (palette icon, in every chat bar)
+
+| Feature | How |
+|---|---|
+| **Colored text** | Type, pick a color (or rainbow words / letters), bold, underline and a highlight. A live preview shows the result |
+| **Send** | Sends it as colored text. Colors show on Discord **desktop and web** |
+| **As image (phone)** | Sends it as a picture, so the colors also show on **phones** (the Discord phone app can't show colored text) |
+| **To chat box** | Puts the colored text in your message box, so you can add more before sending |
 
 ---
 
@@ -120,8 +133,8 @@ pnpm inject
 
 1. **Fully close Discord** (right-click the Discord icon near the clock → **Quit Discord**) and open it again
 2. Open **User Settings** (⚙ bottom-left) → **Vencord** → **Plugins**
-3. Search **VcQuickKick**, **VcTagger** and **SafeSend** and switch each one on
-4. Done 🎉 Join a VC and you'll see the **✕** buttons and the **shield** button in the chat bar
+3. Search **VcQuickKick**, **VcTagger**, **SafeSend** and **ColorText** and switch each one on
+4. Done 🎉 Join a VC and you'll see the **✕** buttons, plus the **sliders**, **lock bubble** and **palette** icons in the chat bar
 
 ### Already build from source?
 
@@ -137,7 +150,7 @@ git clone https://github.com/1devaz/vc-plugins src/userplugins/vc-plugins
 pnpm build
 ```
 
-Restart Discord, then enable **VcQuickKick**, **VcTagger** and **SafeSend** in Settings → Vencord → Plugins.
+Restart Discord, then enable **VcQuickKick**, **VcTagger**, **SafeSend** and **ColorText** in Settings → Vencord → Plugins.
 
 ---
 
@@ -145,9 +158,9 @@ Restart Discord, then enable **VcQuickKick**, **VcTagger** and **SafeSend** in S
 
 **Reject someone:** click the **✕** next to their name. (Change it to *kick* instead in the plugin settings.)
 
-**Undo a reject:** shield button → **✅ Permit recently removed** → click their name. They get a ping in the VC chat.
+**Undo a reject:** VC controls (sliders icon) → **Permit recently removed** → click their name. They get a ping in the VC chat.
 
-**Clear out lots of people:** shield button → **🧹 Bulk kick / reject / permit…**
+**Clear out lots of people:** VC controls (sliders icon) → **Bulk kick / reject / permit**
 - tick people in your VC, or people you removed earlier
 - **Reject** and **Kick** send up to 3 people per command
 - **Permit** sends one command per person (that's how the bot works)
@@ -169,7 +182,7 @@ If you permit them later, they're allowed in again. If you tag them *again* afte
 By default the plugins use the `.v` prefix (`.v reject`, `.v lock`…). If a server's voice bot uses something else, like `!v`:
 
 - **Easiest:** just use any VC command once in that server (e.g. `!v lock`). When the bot replies, the plugin learns the prefix and shows *"Detected !v…"*
-- **Or set it yourself:** join a VC in that server → shield button → **⚙️ Server commands…** → type the prefix → **Save**
+- **Or set it yourself:** join a VC in that server → VC controls (sliders icon) → **Server commands** → type the prefix → **Save**
 
 If the bot uses different *words* (e.g. `ban` instead of `reject`), change just those boxes in the same window. Each server remembers its own setup.
 
@@ -209,7 +222,7 @@ pnpm uninject
 |---|---|
 | Plugins don't show in the list | Make sure the folder is at `Vencord\src\userplugins\vc-plugins`, run `pnpm build`, restart Discord |
 | No ✕ buttons | You only see them for people in **your** VC (not your own name) |
-| Nothing happens when I click ✕ | Check the prefix: shield button → **⚙️ Server commands…** |
+| Nothing happens when I click ✕ | Check the prefix: VC controls (sliders icon) → **Server commands** |
 | Discord updated and Vencord is gone | Run `pnpm inject` again |
 | "You're not in a voice channel" | The commands are sent in your VC's chat, so you have to be in a VC |
 
@@ -217,7 +230,7 @@ pnpm uninject
 
 ## Security: what these plugins can and can't do
 
-The repo is **source code only**: three small `.tsx` files and three `.css` files, no `.exe`, no `.dll`, no scripts, no minified or obfuscated code. You build it yourself with Vencord, so what you read is what runs. GitHub's CodeQL scanner also checks the code automatically (see the **Security** tab).
+The repo is **source code only**: a few small `.tsx` and `.css` files, no `.exe`, no `.dll`, no scripts, no minified or obfuscated code. You build it yourself with Vencord, so what you read is what runs. GitHub's CodeQL scanner also checks the code automatically (see the **Security** tab).
 
 | | |
 |---|---|
@@ -231,10 +244,10 @@ The repo is **source code only**: three small `.tsx` files and three `.css` file
 **Check it yourself** in the repo folder. Each command should find nothing:
 
 ```bash
-grep -rnE "fetch\(|XMLHttpRequest|WebSocket|eval\(|new Function|import\(|require\(|child_process|VencordNative|localStorage|token" vcQuickKick vcTagger safeSend
+grep -rnE "fetch\(|XMLHttpRequest|WebSocket|eval\(|new Function|import\(|require\(|child_process|VencordNative|localStorage|token" vcQuickKick vcTagger safeSend colorText
 ```
 ```bash
-grep -rnoE "https?://[^\"' ]+" vcQuickKick vcTagger safeSend
+grep -rnoE "https?://[^\"' ]+" vcQuickKick vcTagger safeSend colorText
 ```
 The second one only shows `cdn.discordapp.com` (Discord's default avatars).
 

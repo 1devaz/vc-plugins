@@ -1,0 +1,142 @@
+.vc-ct-unused {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 0;
+    color: var(--text-default, #dbdee1);
+}
+
+.vc-ct-input {
+    min-height: 80px;
+    resize: vertical;
+    padding: 10px;
+    border: none;
+    border-radius: 8px;
+    background: var(--input-background, rgb(0 0 0 / 30%));
+    color: inherit;
+    font-family: inherit;
+    font-size: 15px;
+}
+
+.vc-ct-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.vc-ct-swatch {
+    width: 26px;
+    height: 26px;
+    border: 2px solid transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 15%);
+}
+
+.vc-ct-swatch.vc-ct-active { border-color: #fff; transform: scale(1.1); }
+
+.vc-ct-chip {
+    padding: 5px 10px;
+    border: 1px solid var(--border-subtle, rgb(255 255 255 / 10%));
+    border-radius: 999px;
+    background: var(--background-modifier-accent, rgb(255 255 255 / 6%));
+    color: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.vc-ct-chip.vc-ct-active { border-color: #5865f2; background: #5865f2; color: #fff; }
+
+.vc-ct-preview {
+    margin: 0;
+    padding: 10px 12px;
+    border: 1px solid #1e1f22;
+    border-radius: 6px;
+    background: #2b2d31;
+    font-family: var(--font-code, Consolas, monospace);
+    font-size: 14px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.vc-ct-note { opacity: .7; }
+
+/* ---------- popout (same style as VC controls) ---------- */
+.vc-ct-popout {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 380px;
+    padding: 12px;
+    background: #000;
+    border: 1px solid rgb(255 255 255 / 10%);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 55%);
+    color: #fff;
+}
+
+.vc-ct-title, .vc-ct-label {
+    color: rgb(255 255 255 / 55%);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.vc-ct-title { padding-bottom: 2px; }
+.vc-ct-label { margin-top: 4px; }
+
+.vc-ct-popout .vc-ct-input {
+    min-height: 60px;
+    border: 1px solid rgb(255 255 255 / 12%);
+    background: #0d0d0d;
+    color: #fff;
+}
+
+.vc-ct-popout .vc-ct-chip {
+    border: 1px solid rgb(255 255 255 / 15%);
+    background: transparent;
+    color: #fff;
+}
+
+.vc-ct-popout .vc-ct-chip:hover { background: rgb(255 255 255 / 10%); }
+.vc-ct-popout .vc-ct-chip.vc-ct-active { border-color: #fff; background: #fff; color: #000; }
+.vc-ct-popout .vc-ct-preview { border-color: rgb(255 255 255 / 12%); background: #0d0d0d; }
+.vc-ct-sep { height: 1px; margin: 4px 0; background: rgb(255 255 255 / 10%); }
+.vc-ct-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+
+.vc-ct-tool {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 8px 6px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: #fff;
+    font-size: 12.5px;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background .15s;
+}
+
+.vc-ct-tool:hover { background: rgb(255 255 255 / 10%); }
+.vc-ct-tool:hover svg { animation: vc-ct-pop .5s ease; }
+
+@keyframes vc-ct-pop {
+    0%, 100% { transform: scale(1) rotate(0); }
+    35% { transform: scale(1.25) rotate(-9deg); }
+    65% { transform: scale(1.1) rotate(7deg); }
+}
+
+/* chat-bar palette icon */
+.vc-ct-iconwrap { display: flex; align-items: center; justify-content: center; }
+.vc-ct-icon { transform-origin: center; }
+.vc-ct-iconwrap:hover .vc-ct-icon { animation: vc-ct-spin .6s ease; }
+
+@keyframes vc-ct-spin {
+    0% { transform: rotate(0) scale(1); }
+    50% { transform: rotate(180deg) scale(1.2); }
+    100% { transform: rotate(360deg) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .vc-ct-tool:hover svg, .vc-ct-iconwrap:hover .vc-ct-icon { animation: none; }
+}

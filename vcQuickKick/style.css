@@ -182,3 +182,83 @@
     background: rgb(0 0 0 / 30%);
 }
 
+
+/* ---------- horizontal VC control popout ---------- */
+.vc-qk-popout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    padding: 8px;
+    background: #000;
+    border: 1px solid rgb(255 255 255 / 10%);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 55%);
+}
+
+.vc-qk-tool {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: #fff;
+    font-size: 13px;
+    text-align: left;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: transform .12s ease, background .15s;
+}
+
+.vc-qk-tool svg { flex-shrink: 0; }
+
+.vc-qk-tool:hover { background: rgb(255 255 255 / 10%); }
+.vc-qk-tool:hover svg { animation: vc-qk-pop .5s ease; }
+
+@keyframes vc-qk-pop {
+    0%, 100% { transform: scale(1) rotate(0); }
+    35% { transform: scale(1.25) rotate(-9deg); }
+    65% { transform: scale(1.1) rotate(7deg); }
+}
+
+/* chat-bar managing icon */
+.vc-qk-ctrl-btn { display: flex; align-items: center; justify-content: center; }
+.vc-qk-ctrl-icon { transition: transform .18s ease; transform-origin: center; }
+.vc-qk-ctrl-btn:hover .vc-qk-ctrl-icon { animation: vc-qk-sliders .55s ease; }
+
+@keyframes vc-qk-sliders {
+    0%, 100% { transform: translateX(0) scale(1); }
+    30% { transform: translateX(-2px) scale(1.12); }
+    65% { transform: translateX(2px) scale(1.12); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .vc-qk-tool:hover svg,
+    .vc-qk-ctrl-btn:hover .vc-qk-ctrl-icon { animation: none; }
+}
+
+/* join log: black dialog colors + clickable user id */
+.vc-bm .vc-quickkick-log-row { color: #fff; border-bottom-color: rgb(255 255 255 / 8%); }
+.vc-bm .vc-quickkick-log-time, .vc-bm .vc-quickkick-log-meta { color: rgb(255 255 255 / 55%); }
+.vc-bm .vc-quickkick-pager { color: #fff; }
+.vc-bm .vc-quickkick-pager button { border: 1px solid rgb(255 255 255 / 16%); background: transparent; color: #fff; }
+.vc-bm .vc-quickkick-pager button:hover:not(:disabled) { background: #fff; color: #000; }
+.vc-bm .vc-quickkick-bulk, .vc-bm .vc-quickkick-srv { color: #fff; }
+.vc-bm .vc-quickkick-bulk-tools button { border: 1px solid rgb(255 255 255 / 16%); background: transparent; color: #fff; }
+.vc-bm .vc-quickkick-bulk-tools button:hover { background: #fff; color: #000; }
+.vc-bm .vc-quickkick-bulk-row:hover { background: rgb(255 255 255 / 8%); }
+.vc-bm .vc-quickkick-bulk-extra { border: 1px solid rgb(255 255 255 / 14%); background: #0d0d0d; color: #fff; }
+.vc-bm .vc-quickkick-srv-detect { background: rgb(255 255 255 / 8%); }
+.vc-bm .vc-quickkick-srv-bots code { background: rgb(255 255 255 / 10%); }
+
+.vc-quickkick-log-id {
+    padding: 0 4px;
+    border-radius: 4px;
+    color: #fff;
+    text-decoration: underline dotted;
+    cursor: pointer;
+}
+
+.vc-quickkick-log-id:hover { background: #fff; color: #000; text-decoration: none; }

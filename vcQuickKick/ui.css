@@ -1,0 +1,93 @@
+/* black dialogs, same style as the VC controls popout */
+.vc-bm-root {
+    background: transparent !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+}
+
+.vc-bm {
+    display: flex;
+    flex-direction: column;
+    max-height: 82vh;
+    background: #000;
+    border: 1px solid rgb(255 255 255 / 10%);
+    border-radius: 14px;
+    box-shadow: 0 12px 40px rgb(0 0 0 / 60%);
+    color: #fff;
+}
+
+.vc-bm-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 18px 18px 6px 20px;
+}
+
+.vc-bm-title { font-size: 19px; font-weight: 700; line-height: 1.3; }
+
+.vc-bm-x {
+    display: flex;
+    flex-shrink: 0;
+    padding: 4px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: rgb(255 255 255 / 70%);
+    cursor: pointer;
+}
+
+.vc-bm-x:hover { background: rgb(255 255 255 / 10%); color: #fff; }
+
+.vc-bm-body {
+    overflow-y: auto;
+    padding: 6px 20px 18px;
+    color: rgb(255 255 255 / 85%);
+    scrollbar-width: thin;
+}
+
+.vc-bm-text { color: rgb(255 255 255 / 78%); font-size: 15px; line-height: 1.45; }
+.vc-bm-strong { color: #fff; font-weight: 600; }
+.vc-bm-small { font-size: 13px; }
+
+.vc-bm-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 9px 11px;
+    border: 1px solid rgb(255 255 255 / 14%);
+    border-radius: 8px;
+    outline: none;
+    background: #0d0d0d;
+    color: #fff;
+    font-family: inherit;
+    font-size: 14px;
+}
+
+.vc-bm-input:focus { border-color: rgb(255 255 255 / 45%); }
+
+.vc-bm-actions {
+    display: grid;
+    grid-auto-columns: 1fr;
+    grid-auto-flow: column;
+    gap: 10px;
+    padding: 0 20px 20px;
+}
+
+.vc-bm-btn {
+    padding: 11px 14px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s, border-color .15s, transform .1s;
+}
+
+.vc-bm-btn:active { transform: scale(.98); }
+.vc-bm-btn:disabled { opacity: .4; cursor: default; }
+.vc-bm-secondary { border-color: rgb(255 255 255 / 16%); background: transparent; color: #fff; }
+.vc-bm-secondary:hover { background: rgb(255 255 255 / 8%); }
+.vc-bm-primary { background: #fff; color: #000; }
+.vc-bm-primary:hover { background: rgb(255 255 255 / 85%); }
+.vc-bm-danger { background: #da373c; color: #fff; }
+.vc-bm-danger:hover { background: #e5484d; }
