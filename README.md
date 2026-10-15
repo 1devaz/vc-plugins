@@ -9,10 +9,41 @@ Four plugins for Discord (through [Vencord](https://github.com/Vendicated/Vencor
 
 All four use the same clean look: a black panel that opens right above its button in the chat bar (like Discord's emoji picker), with white icons that animate when you hover them.
 
+---
+
+## Screenshots
+
+### 🔵 1 · Reject with one click
+
+Click the red **X** on someone's card in the call, or next to their name in the voice list. Right-click it for every other action.
+
 ![Call view](screenshots/call-view.png)
+
+<br>
+
+### 🟢 2 · VC controls
+
+The **sliders icon** in your VC's chat bar opens every tool in one panel: lock, hide, claim, rename, limit, bulk actions, co-owner, permit, server commands and the join log.
+
 ![VC controls](screenshots/vc-controls.png)
+
+<br>
+
+### 🟡 3 · SafeSend
+
+The **speech bubble with a lock** sets a self-destruct timer for your messages, or deletes all your messages in a chat.
+
 ![SafeSend](screenshots/safesend.png)
+
+<br>
+
+### 🩷 4 · ColorText
+
+The **palette icon** writes colored or rainbow text that everyone sees, or sends it as an image so phones see the colors too.
+
 ![ColorText](screenshots/colortext.png)
+
+<br>
 
 ---
 
@@ -65,6 +96,10 @@ Your own command messages (`.v reject …`) are deleted automatically after 2 se
 ---
 
 ## Install (step by step)
+
+![Install steps](screenshots/install-steps.png)
+
+The same steps in text, so you can copy the commands:
 
 > ⏱ About 10 minutes the first time. You only do this once.
 > 💻 These steps are for **Windows**. Mac/Linux work the same way in a terminal.
