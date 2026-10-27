@@ -26,7 +26,7 @@ The **palette icon**: colored or rainbow text, or send it as an image so phones 
 
 ## Install
 
-**1.** Install [Git](https://git-scm.com/download/win) and [Node.js](https://nodejs.org) (LTS). Then open **PowerShell** and run:
+**1.** Install [Git](https://git-scm.com/download/win) and [Node.js](https://nodejs.org) (LTS). Then open **PowerShell** (not Command Prompt) and run:
 
 ```bash
 npm install -g pnpm
@@ -41,10 +41,16 @@ cd $HOME\Desktop
 git clone https://github.com/Vendicated/Vencord
 ```
 ```bash
-cd Vencord
+git clone https://github.com/1devaz/vc-plugins
 ```
 ```bash
-git clone https://github.com/1devaz/vc-plugins src/userplugins/vc-plugins
+cd Vencord
+```
+
+Copy the four plugin folders into Vencord (one line):
+
+```bash
+Copy-Item ..\vc-plugins\vcQuickKick, ..\vc-plugins\vcTagger, ..\vc-plugins\safeSend, ..\vc-plugins\colorText -Destination src\userplugins -Recurse -Force
 ```
 
 **3.** Build and install. When the installer opens, pick your Discord and press **Install**:
@@ -71,13 +77,24 @@ pnpm inject
 cd $HOME\Desktop\Vencord
 ```
 ```bash
-git -C src\userplugins\vc-plugins pull
+git -C ..\vc-plugins pull
+```
+```bash
+Copy-Item ..\vc-plugins\vcQuickKick, ..\vc-plugins\vcTagger, ..\vc-plugins\safeSend, ..\vc-plugins\colorText -Destination src\userplugins -Recurse -Force
 ```
 ```bash
 pnpm build
 ```
 
 Then restart Discord.
+
+## Error "Could not resolve ./userplugins/vc-plugins"?
+
+You followed an older version of these steps. In PowerShell, inside the Vencord folder, run this, then the **Copy-Item** line from step 2, then `pnpm build`:
+
+```bash
+Move-Item src\userplugins\vc-plugins ..\vc-plugins
+```
 
 ## Other servers
 
