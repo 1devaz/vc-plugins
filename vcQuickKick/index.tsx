@@ -103,7 +103,7 @@ const settings = definePluginSettings({
     limitCommand: cmd("User limit command ({text} = number)", "{p} limit {text}")
 });
 
-interface ServerConfig { prefix?: string; commands?: Record<string, string>; detected?: string; detectedBot?: string; }
+interface ServerConfig { prefix?: string; commands?: Record<string, string>; detected?: string; detectedBot?: string; dialect?: string; }
 
 type UserAction = "kick" | "reject" | "mute" | "unmute" | "permit" | "cowner";
 type ChannelAction = "lock" | "unlock" | "hide" | "unhide" | "claim" | "name" | "limit";
@@ -131,11 +131,55 @@ const COMMAND_KEYS: { key: string; label: string; }[] = [
 
 const currentGuildId = () => ChannelStore.getChannel(SelectedChannelStore.getVoiceChannelId()!)?.guild_id ?? null;
 
+// ---------- per-bot dialects: some VC bots use different command words (e.g. Socialize uses
+// "size" not "limit" and "ban" not "reject", and has no hide / text-mute / co-owner). When we
+// recognise the bot from its slash commands, we auto-use its words and hide actions it lacks. ----------
+
+interface Dialect {
+    id: string;
+    label: string;
+    prefix?: string;
+    match(cmds: string[]): boolean;
+    commands: Partial<Record<string, string>>;
+    unsupported: string[];
+}
+
+const DIALECTS: Dialect[] = [
+    {
+        id: "socialize",
+        label: "Socialize (!voice)",
+        prefix: "!v",
+        match: cmds => cmds.includes("voice size") && cmds.includes("voice permit") && cmds.includes("voice ban"),
+        commands: {
+            reject: "{p} ban {id}",
+            limit: "{p} size {text}"
+        },
+        unsupported: ["mute", "unmute", "hide", "unhide", "cowner"]
+    }
+];
+
+const dialectById = (id?: string): Dialect | undefined => DIALECTS.find(d => d.id === id);
+const guildDialect = (guildId = currentGuildId()): Dialect | undefined => dialectById((guildId ? settings.store.serverCommands?.[guildId] : undefined)?.dialect);
+// a command the detected bot doesn't have, so we hide its button
+const isUnsupported = (key: string): boolean => guildDialect()?.unsupported.includes(key) ?? false;
+
+function detectDialect(guildId: string, bots: BotInfo[]) {
+    const hit = DIALECTS.find(d => bots.some(b => d.match(b.commands)));
+    const current = settings.store.serverCommands?.[guildId]?.dialect;
+    if ((hit?.id ?? undefined) === (current ?? undefined)) return;
+    const all: Record<string, ServerConfig> = plain(settings.store.serverCommands);
+    const next: ServerConfig = { ...(all[guildId] ?? {}) };
+    if (hit) next.dialect = hit.id; else delete next.dialect;
+    all[guildId] = next;
+    settings.store.serverCommands = all;
+}
+
 /** command template for the server you're in voice on: per-server override → global, with {p} / leading .v swapped for that server's prefix */
 function getCommand(key: string, guildId = currentGuildId()): string {
     const cfg: ServerConfig = (guildId && settings.store.serverCommands?.[guildId]) || {};
-    const tpl = cfg.commands?.[key]?.trim() || (settings.store[`${key}Command`] as string);
-    const prefix = cfg.prefix?.trim() || cfg.detected || settings.store.defaultPrefix?.trim() || ".v";
+    const dia = dialectById(cfg.dialect);
+    const tpl = cfg.commands?.[key]?.trim() || dia?.commands[key] || (settings.store[`${key}Command`] as string);
+    const prefix = cfg.prefix?.trim() || cfg.detected || dia?.prefix || settings.store.defaultPrefix?.trim() || ".v";
     return tpl.replace(/^(\{p\}|\.v)(?=\s|$)/, prefix).replaceAll("{p}", prefix);
 }
 
@@ -722,6 +766,7 @@ async function fetchVoiceBots(guildId: string): Promise<BotInfo[]> {
             .filter(([id, cmds]) => VOICE_HINT.test(apps.get(id) ?? "") || cmds.filter(n => VOICE_HINT.test(n)).length >= 2)
             .map(([id, cmds]) => ({ id, name: apps.get(id) ?? "Unknown bot", commands: cmds.filter(n => VOICE_HINT.test(n)).concat(cmds.filter(n => !VOICE_HINT.test(n))) }));
         botCache.set(guildId, bots);
+        detectDialect(guildId, bots);
         return bots;
     } catch (e) {
         logger.warn("couldn't load slash commands", e);
@@ -747,6 +792,7 @@ function ServerCommandsModal({ modalProps, guildId }: { modalProps: RenderModalP
         toast("Forgot the detected prefix, it will be learned again from the next command", "success");
     };
     const usedPrefix = prefix.trim() || saved.detected || settings.store.defaultPrefix || ".v";
+    const dia = dialectById(saved.dialect);
     const [bots, setBots] = useState<BotInfo[] | null>(null);
     useEffect(() => { fetchVoiceBots(guildId).then(setBots); }, [guildId]);
     const detectedBotName = saved.detectedBot && displayName(UserStore.getUser(saved.detectedBot), "a bot");
@@ -776,6 +822,7 @@ function ServerCommandsModal({ modalProps, guildId }: { modalProps: RenderModalP
                         ? <>🔍 Auto-detected prefix: <b>{saved.detected}</b>{detectedBotName ? <> (answered by <b>{detectedBotName}</b>)</> : null} <button className="vc-quickkick-srv-forget" onClick={forgetDetected} title="Wrong prefix? Forget it and detect again">Forget</button></>
                         : <>🔍 No prefix detected yet. Use any VC command once (e.g. <b>!v lock</b>) in this server and it will be learned when the bot replies.</>}
                 </div>
+                {dia && <div className="vc-quickkick-srv-detect">✅ Recognised this server's bot: <b>{dia.label}</b>. Its command words (e.g. <b>ban</b>, <b>size</b>) are used automatically and actions it doesn't have are hidden.</div>}
                 {bots === null
                     ? <Text variant="text-xs/normal">Looking for voice bots…</Text>
                     : bots.length > 0 && (
@@ -796,7 +843,7 @@ function ServerCommandsModal({ modalProps, guildId }: { modalProps: RenderModalP
                         <TextInput
                             value={cmds[key] ?? ""}
                             onChange={v => setCmds(c => ({ ...c, [key]: inputText(v) }))}
-                            placeholder={(settings.store[`${key}Command`] as string).replace(/^(\{p\}|\.v)(?=\s|$)/, usedPrefix)}
+                            placeholder={(dia?.commands[key] || (settings.store[`${key}Command`] as string)).replace(/^(\{p\}|\.v)(?=\s|$)/, usedPrefix)}
                         />
                     </div>
                 ))}
@@ -860,7 +907,7 @@ function openUserMenu(e: React.MouseEvent, user: User) {
     ContextMenuApi.openContextMenu(e as any, () => (
         <Menu.Menu navId="vc-quickkick-user" onClose={ContextMenuApi.closeContextMenu} aria-label="VC actions">
             <Menu.MenuGroup label={displayName(user)}>
-                {USER_ACTIONS.map(a => (
+                {USER_ACTIONS.filter(a => !isUnsupported(a.id)).map(a => (
                     <Menu.MenuItem key={a.id} id={`vc-quickkick-${a.id}`} label={a.label} color={a.danger ? "danger" : undefined} action={() => runUserAction(a.id, user)} />
                 ))}
             </Menu.MenuGroup>
@@ -1034,7 +1081,7 @@ function PanelIcon({ name }: { name: string; }) {
     );
 }
 
-type Tool = { icon: string; name: string; keep?: boolean; on?: boolean; badge?: number; danger?: boolean; run(): void; };
+type Tool = { icon: string; name: string; key?: string; keep?: boolean; on?: boolean; badge?: number; danger?: boolean; run(): void; };
 
 // live state of the VC, read from the channel itself so it's right no matter who or what changed it
 function useVcStatus(channelId: string) {
@@ -1066,8 +1113,8 @@ function VcPanelContent({ channelId, close }: { channelId: string; close: () => 
             tools: [
                 { icon: "lock", name: "Lock", keep: true, on: st.locked, run: () => runChannelAction("lock") },
                 { icon: "unlock", name: "Unlock", keep: true, run: () => runChannelAction("unlock") },
-                { icon: "hide", name: "Hide", keep: true, on: st.hidden, run: () => runChannelAction("hide") },
-                { icon: "unhide", name: "Unhide", keep: true, run: () => runChannelAction("unhide") },
+                { icon: "hide", name: "Hide", key: "hide", keep: true, on: st.hidden, run: () => runChannelAction("hide") },
+                { icon: "unhide", name: "Unhide", key: "unhide", keep: true, run: () => runChannelAction("unhide") },
                 { icon: "rename", name: "Rename", run: () => prompt("Rename VC", "New channel name", v => runChannelAction("name", v), st.name) },
                 {
                     icon: "limit", name: "User limit", run: () => prompt("User limit", "0 to 99 (0 = no limit)", v => {
@@ -1087,7 +1134,7 @@ function VcPanelContent({ channelId, close }: { channelId: string; close: () => 
                     : { icon: "bulk", name: "Bulk kick / reject / permit", run: openBulk },
                 ...(removed.size > 0 && !bulkRunning ? [{ icon: "recent", name: "Permit removed", badge: removed.size, run: openBulk }] : []),
                 { icon: "permit", name: "Permit by ID", run: () => idPrompt("Permit user", id => permitId(id)) },
-                { icon: "cowner", name: "Add co-owner", run: () => idPrompt("Add co-owner", id => runUserAction("cowner", UserStore.getUser(id) ?? ({ id, username: id } as any as User))) },
+                { icon: "cowner", name: "Add co-owner", key: "cowner", run: () => idPrompt("Add co-owner", id => runUserAction("cowner", UserStore.getUser(id) ?? ({ id, username: id } as any as User))) },
                 { icon: "search", name: "Search members", run: openSearchMembers }
             ]
         },
@@ -1108,7 +1155,7 @@ function VcPanelContent({ channelId, close }: { channelId: string; close: () => 
                 {st.locked && <span className="vc-qk-chip vc-qk-chip-on">Locked</span>}
                 {st.hidden && <span className="vc-qk-chip vc-qk-chip-on">Hidden</span>}
             </div>
-            {sections.map(s => (
+            {sections.map(s => ({ ...s, tools: s.tools.filter(t => !(t.key && isUnsupported(t.key))) })).filter(s => s.tools.length).map(s => (
                 <div key={s.label}>
                     <div className="vc-qk-label">{s.label}</div>
                     <div className="vc-qk-grid">
@@ -1193,7 +1240,7 @@ const userContextPatch: NavContextMenuPatchCallback = (children, { user }: { use
     children.push(
         <Menu.MenuGroup>
             <Menu.MenuItem id="vc-quickkick-ctx" label="VC actions">
-                {USER_ACTIONS.map(a => (
+                {USER_ACTIONS.filter(a => !isUnsupported(a.id)).map(a => (
                     <Menu.MenuItem key={a.id} id={`vc-quickkick-ctx-${a.id}`} label={a.label} color={a.danger ? "danger" : undefined} action={() => runUserAction(a.id, user)} />
                 ))}
             </Menu.MenuItem>
@@ -1281,6 +1328,8 @@ export default definePlugin({
                             stopAllTogether();
                             const others = Object.keys(VoiceStateStore.getVoiceStatesForChannel(channelId) ?? {}).filter(id => id !== me);
                             ownedChannel = others.length === 0 ? channelId : null;
+                            const g = ChannelStore.getChannel(channelId)?.guild_id;
+                            if (g) void fetchVoiceBots(g).catch(() => {});
                             others.forEach(id => {
                                 startTogether(id, channelId);
                                 maybeAutoReject(id, channelId);
