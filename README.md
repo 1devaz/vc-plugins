@@ -14,6 +14,10 @@ The **sliders icon** in your VC chat bar: lock, hide, claim, rename, limit, bulk
 
 ![VC controls](screenshots/vc-controls.png)
 
+Search the server, review a searchable join log, and bulk kick / reject / permit people — all from the panel.
+
+![Join log and bulk actions](screenshots/manage.png)
+
 ### 🟡 3 · SafeSend
 The **lock bubble**: make your messages delete themselves, or delete all your messages in a chat.
 
