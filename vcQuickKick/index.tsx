@@ -609,9 +609,17 @@ async function searchAllServers(query: string): Promise<GlobalHit[]> {
     // 1) people loaded in each of your servers (shows the server, with its name + nickname there)
     for (const gid in guilds) {
         const brief = serverBrief(gid, guilds[gid]);
-        for (const id of byId ? [raw] : localCandidateIds(gid)) {
-            const m = memberOf(gid, id);
-            if (m && (byId || nameMatches(m, lower))) add(m, brief);
+        if (byId) {
+            // only count servers the user is actually in — not every server you're in
+            if (GuildMemberStore.isMember(gid, raw) || !!VoiceStateStore.getVoiceState(gid, raw)) {
+                const m = memberOf(gid, raw);
+                if (m) add(m, brief);
+            }
+        } else {
+            for (const id of localCandidateIds(gid)) {
+                const m = memberOf(gid, id);
+                if (m && nameMatches(m, lower)) add(m, brief);
+            }
         }
     }
 
