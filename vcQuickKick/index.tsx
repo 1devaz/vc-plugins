@@ -680,11 +680,10 @@ function SearchMembersModal({ modalProps }: { modalProps: RenderModalProps; }) {
                                     {servers.length ? (
                                         <div className="vc-qk-servers">
                                             {servers.map(s => (
-                                                <span key={s.id} className="vc-qk-server" title={s.name}>
+                                                <span key={s.id} className="vc-qk-server" title={s.name} aria-label={s.name}>
                                                     {s.icon
-                                                        ? <img className="vc-qk-server-icon" src={s.icon} alt="" loading="lazy" />
+                                                        ? <img className="vc-qk-server-icon" src={s.icon} alt={s.name} loading="lazy" />
                                                         : <span className="vc-qk-server-icon vc-qk-server-letter">{s.short[0]}</span>}
-                                                    <span>{s.short}</span>
                                                 </span>
                                             ))}
                                         </div>
