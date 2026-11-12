@@ -7,10 +7,14 @@
 import "./style.css";
 
 import { ChatBarButton, ChatBarButtonFactory } from "@api/ChatButtons";
+import { definePluginSettings } from "@api/Settings";
 import ErrorBoundary from "@components/ErrorBoundary";
+import { copyToClipboard } from "@utils/clipboard";
 import { insertTextIntoChatInputBox, sendMessage } from "@utils/discord";
-import definePlugin, { IconProps } from "@utils/types";
-import { ChannelStore, DraftType, Popout, showToast, UploadHandler, useRef, useState } from "@webpack/common";
+import definePlugin, { IconProps, OptionType } from "@utils/types";
+import { ChannelStore, DraftType, Popout, showToast, UploadHandler, UserStore, useRef, useState } from "@webpack/common";
+
+const toast = (text: string, ok = true) => showToast({ text, variant: ok ? "success" : "critical" });
 
 // Discord's ANSI palette (what everyone sees in ```ansi blocks)
 const FG = [
@@ -37,36 +41,121 @@ const BG = [
 const RAINBOW = [31, 33, 32, 36, 34, 35];
 
 type Mode = "solid" | "rainbow-letters" | "rainbow-words";
+const MODES: { value: Mode; label: string; }[] = [
+    { value: "solid", label: "One color" },
+    { value: "rainbow-words", label: "Rainbow words" },
+    { value: "rainbow-letters", label: "Rainbow letters" }
+];
+
+// ---------- unicode text styles: real different characters, so they show styled on EVERY device,
+// phones included, not just where ANSI colors render ----------
+
+type TextStyle = "none" | "bold" | "mono" | "fullwidth" | "smallcaps";
+
+const TEXT_STYLES: { value: TextStyle; label: string; }[] = [
+    { value: "none", label: "Normal" },
+    { value: "bold", label: "𝗕𝗼𝗹𝗱" },
+    { value: "mono", label: "𝚖𝚘𝚗𝚘" },
+    { value: "fullwidth", label: "Ｗｉｄｅ" },
+    { value: "smallcaps", label: "ᴄᴀᴘs" }
+];
+
+const SMALL_CAPS: Record<string, string> = {
+    a: "ᴀ", b: "ʙ", c: "ᴄ", d: "ᴅ", e: "ᴇ", f: "ꜰ", g: "ɢ", h: "ʜ", i: "ɪ", j: "ᴊ",
+    k: "ᴋ", l: "ʟ", m: "ᴍ", n: "ɴ", o: "ᴏ", p: "ᴘ", q: "ǫ", r: "ʀ", s: "s", t: "ᴛ",
+    u: "ᴜ", v: "ᴠ", w: "ᴡ", x: "x", y: "ʏ", z: "ᴢ"
+};
+
+function applyTextStyle(text: string, style: TextStyle): string {
+    if (style === "none") return text;
+    let out = "";
+    for (const c of text) {
+        const code = c.codePointAt(0)!;
+        if (style === "bold") {
+            if (code >= 65 && code <= 90) out += String.fromCodePoint(0x1D5D4 + (code - 65));
+            else if (code >= 97 && code <= 122) out += String.fromCodePoint(0x1D5EE + (code - 97));
+            else if (code >= 48 && code <= 57) out += String.fromCodePoint(0x1D7EC + (code - 48));
+            else out += c;
+        } else if (style === "mono") {
+            if (code >= 65 && code <= 90) out += String.fromCodePoint(0x1D670 + (code - 65));
+            else if (code >= 97 && code <= 122) out += String.fromCodePoint(0x1D68A + (code - 97));
+            else if (code >= 48 && code <= 57) out += String.fromCodePoint(0x1D7F6 + (code - 48));
+            else out += c;
+        } else if (style === "fullwidth") {
+            out += (code >= 33 && code <= 126) ? String.fromCodePoint(code + 0xFEE0) : c;
+        } else if (style === "smallcaps") {
+            out += SMALL_CAPS[c.toLowerCase()] ?? c;
+        }
+    }
+    return out;
+}
+
+// case transforms rewrite what you typed in the text box
+const CASE_TRANSFORMS: { label: string; run(t: string): string; }[] = [
+    { label: "UPPER", run: t => t.toUpperCase() },
+    { label: "lower", run: t => t.toLowerCase() },
+    { label: "Title", run: t => t.replace(/\S+/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase()) },
+    { label: "aLtErNaTe", run: t => [...t].map((c, i) => i % 2 ? c.toLowerCase() : c.toUpperCase()).join("") }
+];
+
+// ---------- what you picked last time is remembered ----------
+
+interface Prefs {
+    fg: number; bg: number; bold: boolean; underline: boolean; mode: Mode; textStyle: TextStyle;
+    imgSize: number; customColors: boolean; imgFg: string; imgBg: string;
+}
+
+const DEFAULT_PREFS: Prefs = {
+    fg: 31, bg: 0, bold: true, underline: false, mode: "solid", textStyle: "none",
+    imgSize: 26, customColors: false, imgFg: "#ffffff", imgBg: "#2b2d31"
+};
+
+const settings = definePluginSettings({
+    prefs: {
+        type: OptionType.CUSTOM,
+        default: DEFAULT_PREFS
+    }
+});
+
+// kept while Discord is open, so closing the popout by accident doesn't lose what you typed
+let draft = "";
 
 const ESC = "\u001b";
 const code = (...c: number[]) => `${ESC}[${c.join(";")}m`;
 
-/** returns [ansi text, preview pieces] */
-function build(text: string, fg: number, bg: number, bold: boolean, underline: boolean, mode: Mode) {
+type Piece = { t: string; fg: number; };
+
+function build(text: string, { fg, bg, bold, underline, mode }: Prefs) {
     const style = [bold ? 1 : 0, ...(underline ? [4] : [])];
     const withBg = (c: number[]) => (bg ? [...c, bg] : c);
-    const pieces: { t: string; fg: number; }[] = [];
+    const pieces: Piece[] = [];
 
     if (mode === "solid") pieces.push({ t: text, fg });
     else {
         const parts = mode === "rainbow-letters" ? [...text] : text.split(/(\s+)/);
         let i = 0;
         for (const p of parts) {
-            if (!p.trim()) { pieces.push({ t: p, fg }); continue; }
-            pieces.push({ t: p, fg: RAINBOW[i++ % RAINBOW.length] });
+            if (!p) continue;
+            const last = pieces[pieces.length - 1];
+            // spaces have no color of their own: glue them to the piece before, so they don't cost an extra color code
+            if (!p.trim() && last) { last.t += p; continue; }
+            pieces.push({ t: p, fg: p.trim() ? RAINBOW[i++ % RAINBOW.length] : fg });
         }
     }
 
-    const body = pieces.map(p => code(...withBg([...style, p.fg])) + p.t).join("");
+    // a ``` inside the text would close the code block early
+    const safe = (t: string) => t.replaceAll("```", "`​``");
+    const body = pieces.map(p => code(...withBg([...style, p.fg])) + safe(p.t)).join("");
     return { ansi: "```ansi\n" + body + code(0) + "\n```", pieces };
 }
 
+const messageLimit = () => ((UserStore.getCurrentUser() as any)?.premiumType === 2 ? 4000 : 2000);
+
 // ---------- render colored text to an image (so phones see the colors too) ----------
 
-type Piece = { t: string; fg: number; };
 const fgCss = (code: number) => FG.find(f => f.code === code)?.css ?? "#ffffff";
 
-/** split pieces into draw parts; each whitespace char (including newlines) becomes its own part */
+// split pieces into draw parts; each whitespace char (including newlines) becomes its own part
 function splitPieces(pieces: Piece[]) {
     const parts: Piece[] = [];
     for (const p of pieces) {
@@ -77,9 +166,9 @@ function splitPieces(pieces: Piece[]) {
     return parts;
 }
 
-async function renderImage(pieces: Piece[], bold: boolean, underline: boolean, bgCss: string | undefined): Promise<File> {
+async function renderImage(pieces: Piece[], bold: boolean, underline: boolean, bgCss: string | undefined, fontPx: number, fgOverride?: string): Promise<File> {
     const scale = 2;
-    const fontPx = 26, lineH = 38, pad = 22, maxW = 680;
+    const lineH = Math.round(fontPx * 1.45), pad = Math.round(fontPx * 0.85), maxW = 680;
     const font = `${bold ? "700" : "500"} ${fontPx}px 'gg sans', 'Noto Sans', 'Segoe UI', Arial, sans-serif`;
 
     const measure = document.createElement("canvas").getContext("2d")!;
@@ -118,10 +207,10 @@ async function renderImage(pieces: Piece[], bold: boolean, underline: boolean, b
     ctx.textBaseline = "top";
     for (const p of placed) {
         const px = pad + p.x, py = pad + p.line * lineH;
-        ctx.fillStyle = fgCss(p.fg);
+        ctx.fillStyle = fgOverride ?? fgCss(p.fg);
         ctx.fillText(p.t, px, py);
         if (underline && p.t.trim()) {
-            ctx.strokeStyle = fgCss(p.fg);
+            ctx.strokeStyle = fgOverride ?? fgCss(p.fg);
             ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.moveTo(px, py + fontPx + 2);
@@ -135,81 +224,142 @@ async function renderImage(pieces: Piece[], bold: boolean, underline: boolean, b
 }
 
 function Swatch({ color, active, title, onClick }: { color: string; active: boolean; title: string; onClick(): void; }) {
-    return <button className={`vc-ct-swatch${active ? " vc-ct-active" : ""}`} style={{ background: color }} title={title} onClick={onClick} />;
+    return <button className={`vc-ct-swatch${active ? " vc-ct-active" : ""}`} style={{ background: color }} title={title} aria-label={title} aria-pressed={active} onClick={onClick} />;
+}
+
+function Chip({ active, onClick, children, title }: { active?: boolean; onClick(): void; children: React.ReactNode; title?: string; }) {
+    return <button className={`vc-ct-chip${active ? " vc-ct-active" : ""}`} aria-pressed={active} title={title} onClick={onClick}>{children}</button>;
 }
 
 function ColorPanel({ channelId, close }: { channelId: string; close: () => void; }) {
-    const [text, setText] = useState("");
-    const [fg, setFg] = useState(31);
-    const [bg, setBg] = useState(0);
-    const [bold, setBold] = useState(true);
-    const [underline, setUnderline] = useState(false);
-    const [mode, setMode] = useState<Mode>("solid");
+    const [text, setTextState] = useState(draft);
+    const [prefs, setPrefs] = useState<Prefs>(() => ({ ...DEFAULT_PREFS, ...JSON.parse(JSON.stringify(settings.store.prefs ?? {})) }));
+    const [imgOpen, setImgOpen] = useState(prefs.customColors || prefs.imgSize !== DEFAULT_PREFS.imgSize);
 
-    const { ansi, pieces } = build(text || "Your colored text", fg, bg, bold, underline, mode);
-    const bgCss = BG.find(b => b.code === bg)?.css;
-    const ok = () => { if (!text.trim()) { showToast("Type some text first", "failure"); return false; } return true; };
+    const setText = (v: string) => { draft = v; setTextState(v); };
+    const set = (patch: Partial<Prefs>) => {
+        const next = { ...prefs, ...patch };
+        setPrefs(next);
+        settings.store.prefs = next;
+    };
+
+    const styledText = applyTextStyle(text, prefs.textStyle);
+    const { ansi, pieces } = build(styledText || "Your colored text", prefs);
+    const bgCss = BG.find(b => b.code === prefs.bg)?.css;
+    const limit = messageLimit();
+    const empty = !text.trim();
+    const tooLong = !empty && ansi.length > limit;
+    const usesImageColors = prefs.customColors;
+
+    const finish = () => { setText(""); close(); };
 
     const sendImage = async () => {
-        if (!ok()) return;
+        if (empty) return;
         try {
-            const file = await renderImage(build(text, fg, bg, bold, underline, mode).pieces, bold, underline, bgCss);
+            const file = await renderImage(
+                build(styledText, prefs).pieces,
+                prefs.bold, prefs.underline,
+                prefs.customColors ? prefs.imgBg : bgCss,
+                prefs.imgSize,
+                prefs.customColors ? prefs.imgFg : undefined
+            );
             UploadHandler.promptToUpload([file], ChannelStore.getChannel(channelId), DraftType.ChannelMessage);
-            close();
-            showToast("Image added — press Enter to send (shows colors on phone too)", "success");
-        } catch (e) {
-            showToast("Couldn't make the image", "failure");
+            finish();
+            toast("Image added, press Enter to send");
+        } catch {
+            toast("Couldn't make the image", false);
         }
     };
 
-    const send = () => { if (!ok()) return; sendMessage(channelId, { content: ansi }); close(); };
-    const toBox = () => { if (!ok()) return; insertTextIntoChatInputBox(ansi); close(); };
+    const send = () => { if (empty || tooLong) return; sendMessage(channelId, { content: ansi }); finish(); };
+    const toBox = () => { if (empty || tooLong) return; insertTextIntoChatInputBox(ansi); finish(); };
+    const copy = async () => { if (empty) return; await copyToClipboard(ansi); toast("Copied to clipboard"); };
 
     return (
-        <div className="vc-ct-popout">
-            <div className="vc-ct-title">Color text</div>
-            <textarea className="vc-ct-input" value={text} autoFocus onChange={e => setText(e.currentTarget.value)} placeholder="Type your text…" />
-
-            <div className="vc-ct-label">Style</div>
-            <div className="vc-ct-row">
-                {(["solid", "rainbow-words", "rainbow-letters"] as Mode[]).map(m => (
-                    <button key={m} className={`vc-ct-chip${mode === m ? " vc-ct-active" : ""}`} onClick={() => setMode(m)}>
-                        {m === "solid" ? "One color" : m === "rainbow-words" ? "Rainbow words" : "Rainbow letters"}
-                    </button>
-                ))}
-                <button className={`vc-ct-chip${bold ? " vc-ct-active" : ""}`} onClick={() => setBold(!bold)}><b>B</b></button>
-                <button className={`vc-ct-chip${underline ? " vc-ct-active" : ""}`} onClick={() => setUnderline(!underline)}><u>U</u></button>
+        <div className="vc-ct-popout" role="dialog" aria-label="Color text">
+            <div className="vc-ct-head">
+                <div className="vc-ct-title">Color text</div>
+                <button className="vc-ct-link" onClick={() => { set(DEFAULT_PREFS); setText(""); }} title="Clear the text and go back to the default style">Reset</button>
             </div>
+            <textarea
+                className="vc-ct-input"
+                value={text}
+                autoFocus
+                onChange={e => setText(e.currentTarget.value)}
+                onKeyDown={e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); tooLong ? sendImage() : send(); } }}
+                placeholder="Type your text… (Ctrl+Enter sends)"
+            />
 
-            {mode === "solid" && (
-                <>
-                    <div className="vc-ct-label">Text color</div>
-                    <div className="vc-ct-row">{FG.map(c => <Swatch key={c.code} color={c.css} title={c.name} active={fg === c.code} onClick={() => setFg(c.code)} />)}</div>
-                </>
+            <div className="vc-ct-label">Color</div>
+            <div className="vc-ct-row">
+                {MODES.map(m => <Chip key={m.value} active={prefs.mode === m.value} onClick={() => set({ mode: m.value })}>{m.label}</Chip>)}
+                <Chip active={prefs.bold} onClick={() => set({ bold: !prefs.bold })} title="Bold"><b>B</b></Chip>
+                <Chip active={prefs.underline} onClick={() => set({ underline: !prefs.underline })} title="Underline"><u>U</u></Chip>
+            </div>
+            {prefs.mode === "solid" && (
+                <div className="vc-ct-row">{FG.map(c => <Swatch key={c.code} color={c.css} title={c.name} active={prefs.fg === c.code} onClick={() => set({ fg: c.code })} />)}</div>
             )}
 
             <div className="vc-ct-label">Highlight</div>
             <div className="vc-ct-row">
-                {BG.map(c => <Swatch key={c.code} color={c.code ? c.css : "repeating-conic-gradient(#555 0 25%, #333 0 50%) 0 0/10px 10px"} title={c.name} active={bg === c.code} onClick={() => setBg(c.code)} />)}
+                {BG.map(c => <Swatch key={c.code} color={c.code ? c.css : "repeating-conic-gradient(#555 0 25%, #333 0 50%) 0 0/10px 10px"} title={c.name} active={prefs.bg === c.code} onClick={() => set({ bg: c.code })} />)}
             </div>
 
-            <div className="vc-ct-label">Preview</div>
-            <pre className="vc-ct-preview">
+            <div className="vc-ct-label">Letters</div>
+            <div className="vc-ct-row">
+                {TEXT_STYLES.map(s => <Chip key={s.value} active={prefs.textStyle === s.value} onClick={() => set({ textStyle: s.value })}>{s.label}</Chip>)}
+            </div>
+            <div className="vc-ct-row">
+                {CASE_TRANSFORMS.map(c => <Chip key={c.label} onClick={() => setText(c.run(text))} title="Rewrites the text you typed">{c.label}</Chip>)}
+            </div>
+
+            <div className="vc-ct-head">
+                <div className="vc-ct-label">Preview</div>
+                {!empty && <div className={"vc-ct-count" + (tooLong ? " vc-ct-over" : "")}>{ansi.length} / {limit}</div>}
+            </div>
+            <pre className="vc-ct-preview" style={usesImageColors ? { background: prefs.imgBg } : undefined}>
                 {pieces.map((p, i) => (
                     <span key={i} style={{
-                        color: FG.find(f => f.code === p.fg)?.css,
-                        background: bgCss,
-                        fontWeight: bold ? 700 : 400,
-                        textDecoration: underline ? "underline" : undefined
+                        color: usesImageColors ? prefs.imgFg : fgCss(p.fg),
+                        background: usesImageColors ? undefined : bgCss,
+                        fontWeight: prefs.bold ? 700 : 400,
+                        textDecoration: prefs.underline ? "underline" : undefined
                     }}>{p.t}</span>
                 ))}
             </pre>
+            {usesImageColors && <div className="vc-ct-note">Showing your custom image colors. They only apply to “Send as image”.</div>}
+            {tooLong && <div className="vc-ct-note vc-ct-over">Too long to send as text (color codes count toward Discord's limit). Use “Send as image”, or try “Rainbow words” or one color.</div>}
+
+            <button className="vc-ct-disclosure" aria-expanded={imgOpen} onClick={() => setImgOpen(v => !v)}>
+                <span>{imgOpen ? "▾" : "▸"} Image options</span>
+                <span className="vc-ct-disclosure-hint">only for “Send as image”</span>
+            </button>
+            {imgOpen && (
+                <div className="vc-ct-imgopts">
+                    <label className="vc-ct-size">
+                        Size
+                        <input type="range" min={16} max={44} value={prefs.imgSize} onChange={e => set({ imgSize: Number(e.currentTarget.value) })} />
+                        <span>{prefs.imgSize}px</span>
+                    </label>
+                    <label className="vc-ct-check">
+                        <input type="checkbox" checked={prefs.customColors} onChange={e => set({ customColors: e.currentTarget.checked })} />
+                        Custom colors (any color, one for all the text)
+                    </label>
+                    {prefs.customColors && (
+                        <div className="vc-ct-row">
+                            <label className="vc-ct-colorpick">Text <input type="color" value={prefs.imgFg} onChange={e => set({ imgFg: e.currentTarget.value })} /></label>
+                            <label className="vc-ct-colorpick">Background <input type="color" value={prefs.imgBg} onChange={e => set({ imgBg: e.currentTarget.value })} /></label>
+                        </div>
+                    )}
+                </div>
+            )}
 
             <div className="vc-ct-sep" />
             <div className="vc-ct-actions">
-                <button className="vc-ct-tool" onClick={send}><CtIcon name="send" /><span>Send</span></button>
-                <button className="vc-ct-tool" onClick={sendImage}><CtIcon name="phone" /><span>As image (phone)</span></button>
-                <button className="vc-ct-tool" onClick={toBox}><CtIcon name="box" /><span>To chat box</span></button>
+                <button className="vc-ct-tool vc-ct-primary" disabled={empty || tooLong} onClick={send}><CtIcon name="send" /><span>Send</span></button>
+                <button className="vc-ct-tool" disabled={empty} onClick={sendImage} title="Shows the colors on phones too"><CtIcon name="image" /><span>Send as image</span></button>
+                <button className="vc-ct-tool" disabled={empty || tooLong} onClick={toBox}><CtIcon name="box" /><span>To chat box</span></button>
+                <button className="vc-ct-tool" disabled={empty} onClick={copy}><CtIcon name="copy" /><span>Copy</span></button>
             </div>
         </div>
     );
@@ -217,14 +367,15 @@ function ColorPanel({ channelId, close }: { channelId: string; close: () => void
 
 const CT_ICONS: Record<string, string[]> = {
     send: ["M22 2L11 13", "M22 2l-7 20-4-9-9-4z"],
-    phone: ["M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z", "M11 18h2"],
-    box: ["M4 6h16v12H4z", "M8 10h8M8 14h5"]
+    image: ["M3 3h18v18H3z", "M8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z", "M21 15l-5-5-9 9"],
+    box: ["M4 6h16v12H4z", "M8 10h8M8 14h5"],
+    copy: ["M9 9h11v11H9z", "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"]
 };
 
 function CtIcon({ name }: { name: string; }) {
     return (
         <svg viewBox="0 0 24 24" width={18} height={18} fill="none" stroke="currentColor"
-            strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+            strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             {CT_ICONS[name].map((d, i) => <path key={i} d={d} />)}
         </svg>
     );
@@ -267,8 +418,9 @@ const ColorButton: ChatBarButtonFactory = ({ channel }) => {
 
 export default definePlugin({
     name: "ColorText",
-    description: "Write colored / rainbow text everyone sees — ANSI for desktop, or send as an image so phones see the colors too",
+    description: "Write colored / rainbow / unicode-styled text, with case transforms, custom image colors & size, copy, or send as an image",
     authors: [{ name: "you", id: 0n }],
+    settings,
 
     chatBarButton: {
         icon: PaletteIcon,

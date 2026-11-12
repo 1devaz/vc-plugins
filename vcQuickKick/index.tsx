@@ -11,16 +11,16 @@ import { NavContextMenuPatchCallback } from "@api/ContextMenu";
 import * as DataStore from "@api/DataStore";
 import { definePluginSettings } from "@api/Settings";
 import ErrorBoundary from "@components/ErrorBoundary";
-import { insertTextIntoChatInputBox, sendMessage } from "@utils/discord";
+import { insertTextIntoChatInputBox, openUserProfile, sendMessage } from "@utils/discord";
 import { Logger } from "@utils/Logger";
 import definePlugin, { IconProps, OptionType } from "@utils/types";
 import type { RenderModalProps, User } from "@vencord/discord-types";
 import {
-    ChannelStore, ContextMenuApi, GuildStore, FluxDispatcher, Menu, MessageActions, openModal, PermissionsBits, PermissionStore, Popout, RestAPI, SelectedChannelStore,
-    showToast, Tooltip, UserStore, useEffect, useRef, useState, useStateFromStores, VoiceStateStore
+    ChannelStore, ContextMenuApi, FluxDispatcher, GuildMemberStore, GuildStore, Menu, MessageActions, openModal, PermissionsBits, PermissionStore, Popout, RestAPI, SelectedChannelStore, SnowflakeUtils,
+    Tooltip, UserStore, UserUtils, useEffect, useRef, useState, useStateFromStores, VoiceStateStore
 } from "@webpack/common";
 
-import { Modal, Text, TextInput } from "./ui";
+import { confirmDialog, Modal, Text, TextInput, toast } from "./ui";
 
 const logger = new Logger("VcQuickKick");
 /** deep plain copy: settings.store hands out live proxies, and proxies can't be saved to disk ("could not be cloned") */
@@ -56,6 +56,11 @@ const settings = definePluginSettings({
         type: OptionType.NUMBER,
         description: "Seconds before your command message is deleted (give the bot time to read it)",
         default: 2
+    },
+    confirmClick: {
+        type: OptionType.BOOLEAN,
+        description: "Ask before a left-click on the ✕ button kicks/rejects (protects against misclicks)",
+        default: false
     },
     tileButton: {
         type: OptionType.BOOLEAN,
@@ -137,10 +142,12 @@ function getCommand(key: string, guildId = currentGuildId()): string {
 function sendCommand(content: string): boolean {
     const channelId = SelectedChannelStore.getVoiceChannelId();
     if (!channelId) {
-        showToast("You're not in a voice channel", "failure");
+        toast("You're not in a voice channel", "failure");
         return false;
     }
-    pendingDeletes.set(`${channelId}|${content}`, Date.now() + 30_000);
+    const now = Date.now();
+    pendingDeletes.forEach((expiry, key) => { if (expiry < now) pendingDeletes.delete(key); });
+    pendingDeletes.set(`${channelId}|${content}`, now + 30_000);
     sendMessage(channelId, { content });
     return true;
 }
@@ -181,7 +188,7 @@ function learnPrefix(message: any) {
 
     if (!notifiedGuilds.has(guildId)) {
         notifiedGuilds.add(guildId);
-        showToast(`Detected ${cand.prefix} as the VC bot prefix for ${GuildStore.getGuild(guildId)?.name ?? "this server"} — change it in ⚙️ Server commands if wrong`, "success");
+        toast(`Detected ${cand.prefix} as the VC bot prefix for ${GuildStore.getGuild(guildId)?.name ?? "this server"} — change it in ⚙️ Server commands if wrong`, "success");
     }
 }
 
@@ -214,7 +221,7 @@ function permitId(id: string): boolean {
     const msg = (settings.store.permitMessage as string)?.trim();
     const channelId = SelectedChannelStore.getVoiceChannelId();
     if (msg && channelId) setTimeout(() => sendMessage(channelId, { content: msg.replaceAll("{id}", id) }), 800);
-    showToast(`Permitted ${displayName(UserStore.getUser(id), id)}`, "success");
+    toast(`Permitted ${displayName(UserStore.getUser(id), id)}`, "success");
     return true;
 }
 
@@ -223,7 +230,7 @@ function runUserAction(kind: UserAction, user: User, auto = false) {
     const template = getCommand(kind);
     if (!sendCommand(template.replaceAll("{id}", user.id))) return;
     if (kind === "kick" || kind === "reject") noteRemoved(kind, user.id, !auto);
-    showToast(`${auto ? "Auto-" : ""}${PAST[kind].toLowerCase().replace(/^./, c => auto ? c : c.toUpperCase())} ${displayName(user)}`, auto ? "failure" : "success");
+    toast(`${auto ? "Auto-" : ""}${PAST[kind].toLowerCase().replace(/^./, c => auto ? c : c.toUpperCase())} ${displayName(user)}`, auto ? "failure" : "success");
 }
 
 /** bookkeeping after a kick/reject: recent list, permit list, optional VcTagger tag */
@@ -241,8 +248,25 @@ function noteRemoved(kind: "kick" | "reject", id: string, tag: boolean) {
 }
 
 function runChannelAction(kind: ChannelAction, text?: string) {
-    const template = getCommand(kind);
-    if (sendCommand(template.replaceAll("{text}", text ?? ""))) showToast(`Sent: ${kind}${text ? ` ${text}` : ""}`, "success");
+    const content = getCommand(kind).replaceAll("{text}", text ?? "");
+    if (!sendCommand(content)) return;
+    if (kind === "claim") ownedChannel = SelectedChannelStore.getVoiceChannelId() ?? null;
+    toast(`Sent: ${content}`, "success");
+}
+
+// left-click on a ✕ button
+function quickAction(user: User) {
+    const kind = settings.store.action === "kick" ? "kick" : "reject";
+    if (!settings.store.confirmClick) return runUserAction(kind, user);
+    confirmDialog({
+        title: `${kind === "kick" ? "Kick" : "Reject"} ${displayName(user)}?`,
+        body: kind === "kick"
+            ? "They are removed from your VC but can join again."
+            : "They are removed from your VC and can't come back until you permit them.",
+        confirmText: kind === "kick" ? "Kick" : "Reject",
+        danger: true,
+        onConfirm: () => runUserAction(kind, user)
+    });
 }
 
 // ---------- seen-before history (#5) ----------
@@ -279,9 +303,20 @@ function stopAllTogether() {
     togetherTimers.clear();
 }
 
-function seenText(userId: string) {
-    return `Meets: ${seen[userId]?.count ?? 0}`;
+function ago(time: number) {
+    const s = Math.max(0, Date.now() - time) / 1000;
+    if (s < 60) return "just now";
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86_400) return `${Math.floor(s / 3600)}h ago`;
+    return `${Math.floor(s / 86_400)}d ago`;
 }
+
+function seenText(userId: string) {
+    const s = seen[userId];
+    return s ? `Met ${s.count}× · last ${ago(s.last)} in ${s.channel}` : "Not met before";
+}
+
+const quickLabel = () => settings.store.action === "kick" ? "Kick" : "Reject";
 
 let saveTimer: any;
 function startSaving() {
@@ -311,60 +346,113 @@ function avatarUrl(userId: string) {
     return `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(userId) >> 22n) % 6n)}.png`;
 }
 
+type LogFilter = "all" | "join" | "leave";
+const LOG_FILTERS: { id: LogFilter; label: string; }[] = [{ id: "all", label: "All" }, { id: "join", label: "Joined" }, { id: "leave", label: "Left" }];
+
 function JoinLogModal({ modalProps }: { modalProps: RenderModalProps; }) {
     const [, force] = useState(0);
     const [page, setPage] = useState(0);
-    useState(() => { const f = () => force(x => x + 1); logListeners.add(f); return () => logListeners.delete(f); });
+    const [filter, setFilter] = useState<LogFilter>("all");
+    const [query, setQuery] = useState("");
+    useEffect(() => {
+        const f = () => force(x => x + 1);
+        logListeners.add(f);
+        return () => void logListeners.delete(f);
+    }, []);
     const tagger = Vencord.Plugins.plugins.VcTagger as any;
 
-    const pages = Math.max(1, Math.ceil(joinLog.length / LOG_PAGE_SIZE));
+    const q = query.trim().toLowerCase();
+    const filtered = joinLog.filter(e => {
+        if (filter !== "all" && e.type !== filter) return false;
+        if (!q) return true;
+        const u = UserStore.getUser(e.userId);
+        return e.userId.includes(q) || displayName(u, "").toLowerCase().includes(q) || !!u?.username?.toLowerCase().includes(q);
+    });
+    const pages = Math.max(1, Math.ceil(filtered.length / LOG_PAGE_SIZE));
     const cur = Math.min(page, pages - 1);
-    const rows = joinLog.slice(cur * LOG_PAGE_SIZE, (cur + 1) * LOG_PAGE_SIZE);
+    const rows = filtered.slice(cur * LOG_PAGE_SIZE, (cur + 1) * LOG_PAGE_SIZE);
+    const clear = () => { joinLog.length = 0; logListeners.forEach(f => f()); };
 
     return (
-        <Modal {...modalProps} title={`VC join log (${joinLog.length})`} size="md">
+        <Modal {...modalProps} title="VC join log" subtitle={`${joinLog.length} event${joinLog.length === 1 ? "" : "s"} this session · newest first`} size="md">
             {joinLog.length === 0
-                ? <Text variant="text-md/normal">Nobody joined or left your VC yet in this session.</Text>
+                ? <div className="vc-qk-empty">Nobody joined or left your VC yet in this session.</div>
                 : (
                     <>
-                        <div className="vc-quickkick-log">
-                            {rows.map((e, i) => {
-                                const u = UserStore.getUser(e.userId);
-                                const tag = tagger?.started ? tagger.getTag(e.userId) : null;
-                                return (
-                                    <div key={`${e.time}-${i}`} className="vc-quickkick-log-row">
-                                        <img className="vc-quickkick-log-avatar" src={avatarUrl(e.userId)} alt="" loading="lazy" />
-                                        <div className="vc-quickkick-log-body">
-                                            <div className="vc-quickkick-log-line">
-                                                <span className={e.type === "join" ? "vc-quickkick-in" : "vc-quickkick-out"}>{e.type === "join" ? "→ joined" : "← left"}</span>
-                                                <span className="vc-quickkick-log-name">{displayName(u, e.userId)}</span>
-                                                {tag && <span className="vc-vctagger-badge vc-vctagger-compact">⚠ {tag.label}</span>}
-                                                <span className="vc-quickkick-log-time">{new Date(e.time).toLocaleTimeString()}</span>
-                                            </div>
-                                            <span className="vc-quickkick-log-meta">
-                                                {e.channel} ·{" "}
-                                                <span
-                                                    className="vc-quickkick-log-id"
-                                                    title="Click to mention them in the chat box"
-                                                    onClick={() => {
-                                                        insertTextIntoChatInputBox(`<@${e.userId}> `);
-                                                        modalProps.onClose();
-                                                        showToast(`Added @${displayName(u, e.userId)} to the chat box`, "success");
-                                                    }}
-                                                >{e.userId}</span>
-                                            </span>
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                        <div className="vc-qk-toolbar">
+                            <TextInput value={query} onChange={v => { setQuery(inputText(v)); setPage(0); }} placeholder="Filter by name or ID…" autoFocus />
+                            <div className="vc-qk-seg" role="group" aria-label="Event type">
+                                {LOG_FILTERS.map(f => (
+                                    <button key={f.id} className={filter === f.id ? "vc-qk-seg-on" : ""} aria-pressed={filter === f.id} onClick={() => { setFilter(f.id); setPage(0); }}>{f.label}</button>
+                                ))}
+                            </div>
+                            <button className="vc-qk-table-action" onClick={clear}>Clear log</button>
                         </div>
+                        {rows.length === 0 && <div className="vc-qk-empty">Nothing matches that filter.</div>}
+                        {rows.length > 0 && (
+                            <table className="vc-qk-table">
+                                <thead>
+                                    <tr>
+                                        <th>User</th>
+                                        <th>Event</th>
+                                        <th>Channel</th>
+                                        <th>Time</th>
+                                        <th>ID</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {rows.map((e, i) => {
+                                        const u = UserStore.getUser(e.userId);
+                                        const tag = tagger?.started ? tagger.getTag(e.userId) : null;
+                                        return (
+                                            <tr key={`${e.time}-${e.userId}-${i}`}>
+                                                <td>
+                                                    <div className="vc-qk-table-user">
+                                                        <img
+                                                            className="vc-qk-table-avatar"
+                                                            src={avatarUrl(e.userId)}
+                                                            alt=""
+                                                            loading="lazy"
+                                                            title="Click to view profile"
+                                                            onClick={() => openUserProfile(e.userId)}
+                                                        />
+                                                        <div className="vc-qk-table-namecol">
+                                                            <span
+                                                                className="vc-quickkick-log-name vc-qk-table-link"
+                                                                title={`Click to view profile · ${seenText(e.userId)}`}
+                                                                onClick={() => openUserProfile(e.userId)}
+                                                            >{displayName(u, e.userId)}</span>
+                                                            {tag && <span className="vc-vctagger-badge vc-vctagger-compact">⚠ {tag.label}</span>}
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td><span className={e.type === "join" ? "vc-quickkick-in" : "vc-quickkick-out"}>{e.type === "join" ? "→ joined" : "← left"}</span></td>
+                                                <td className="vc-quickkick-log-meta">{e.channel}</td>
+                                                <td className="vc-quickkick-log-time" title={new Date(e.time).toLocaleString()}>{new Date(e.time).toLocaleTimeString()}</td>
+                                                <td>
+                                                    <span
+                                                        className="vc-quickkick-log-id"
+                                                        title="Click to mention them in the chat box"
+                                                        onClick={() => {
+                                                            insertTextIntoChatInputBox(`<@${e.userId}> `);
+                                                            modalProps.onClose();
+                                                            toast(`Added @${displayName(u, e.userId)} to the chat box`, "success");
+                                                        }}
+                                                    >{e.userId}</span>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        )}
                         {pages > 1 && (
                             <div className="vc-quickkick-pager">
-                                <button disabled={cur === 0} onClick={() => setPage(0)}>«</button>
+                                <button disabled={cur === 0} onClick={() => setPage(0)} aria-label="First page">«</button>
                                 <button disabled={cur === 0} onClick={() => setPage(cur - 1)}>‹ Prev</button>
                                 <span>Page {cur + 1} / {pages}</span>
                                 <button disabled={cur >= pages - 1} onClick={() => setPage(cur + 1)}>Next ›</button>
-                                <button disabled={cur >= pages - 1} onClick={() => setPage(pages - 1)}>»</button>
+                                <button disabled={cur >= pages - 1} onClick={() => setPage(pages - 1)} aria-label="Last page">»</button>
                             </div>
                         )}
                     </>
@@ -373,39 +461,163 @@ function JoinLogModal({ modalProps }: { modalProps: RenderModalProps; }) {
     );
 }
 
+// ---------- search members (by user ID, username or nickname) ----------
+
+interface FoundMember { id: string; username: string; globalName?: string; nick?: string; avatar?: string; }
+
+function apiAvatarUrl(m: FoundMember) {
+    if (m.avatar) return `https://cdn.discordapp.com/avatars/${m.id}/${m.avatar}.webp?size=64`;
+    return `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(m.id) >> 22n) % 6n)}.png`;
+}
+
+const ID_RE = /^\d{15,21}$/;
+
+async function searchGuildMembers(guildId: string, query: string): Promise<FoundMember[]> {
+    const q = query.trim();
+    if (!q) return [];
+    const found = new Map<string, FoundMember>();
+
+    if (ID_RE.test(q)) {
+        try {
+            const { body } = await RestAPI.get({ url: `/guilds/${guildId}/members/${q}` });
+            if (body?.user) found.set(body.user.id, { id: body.user.id, username: body.user.username, globalName: body.user.global_name, nick: body.nick, avatar: body.user.avatar });
+        } catch {
+            // not a member of this guild, or no permission — fall through to the name search
+        }
+    }
+
+    try {
+        const { body } = await RestAPI.get({ url: `/guilds/${guildId}/members/search`, query: { query: q, limit: 25 } });
+        for (const m of body ?? []) {
+            if (!found.has(m.user.id)) found.set(m.user.id, { id: m.user.id, username: m.user.username, globalName: m.user.global_name, nick: m.nick, avatar: m.user.avatar });
+        }
+    } catch (e) {
+        logger.warn("member search failed", e);
+    }
+
+    return [...found.values()];
+}
+
+function SearchMembersModal({ modalProps, guildId }: { modalProps: RenderModalProps; guildId: string; }) {
+    const [query, setQuery] = useState("");
+    const [results, setResults] = useState<FoundMember[] | null>(null);
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        const q = query.trim();
+        if (!q) { setResults(null); setLoading(false); return; }
+        setLoading(true);
+        // a slow older search must not overwrite the results of a newer one
+        let stale = false;
+        const timer = setTimeout(async () => {
+            const r = await searchGuildMembers(guildId, q);
+            if (stale) return;
+            setResults(r);
+            setLoading(false);
+        }, 300);
+        return () => { stale = true; clearTimeout(timer); };
+    }, [query, guildId]);
+
+    const mention = (m: FoundMember) => {
+        insertTextIntoChatInputBox(`<@${m.id}> `);
+        modalProps.onClose();
+        toast(`Added @${m.nick ?? m.globalName ?? m.username} to the chat box`, "success");
+    };
+
+    return (
+        <Modal {...modalProps} title="Search members" size="md">
+            <TextInput value={query} onChange={v => setQuery(inputText(v))} placeholder="User ID, username or nickname…" autoFocus />
+            {loading && <Text variant="text-sm/normal" style={{ marginTop: 8 }}>Searching…</Text>}
+            {!loading && results !== null && results.length === 0 && <Text variant="text-sm/normal" style={{ marginTop: 8 }}>No members matched.</Text>}
+            {!loading && results !== null && results.length > 0 && (
+                <table className="vc-qk-table" style={{ marginTop: 10 }}>
+                    <thead>
+                        <tr>
+                            <th>User</th>
+                            <th>Username</th>
+                            <th>ID</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {results.map(m => (
+                            <tr key={m.id}>
+                                <td>
+                                    <div className="vc-qk-table-user">
+                                        <img
+                                            className="vc-qk-table-avatar"
+                                            src={apiAvatarUrl(m)}
+                                            alt=""
+                                            loading="lazy"
+                                            title="Click to view profile"
+                                            onClick={() => openUserProfile(m.id)}
+                                        />
+                                        <span className="vc-qk-table-link" title="Click to view profile" onClick={() => openUserProfile(m.id)}>
+                                            {m.nick ?? m.globalName ?? m.username}
+                                        </span>
+                                    </div>
+                                </td>
+                                <td className="vc-quickkick-log-meta">@{m.username}</td>
+                                <td><span className="vc-quickkick-log-id" title="Click to mention them in the chat box" onClick={() => mention(m)}>{m.id}</span></td>
+                                <td>
+                                    <div className="vc-qk-table-actions">
+                                        <button className="vc-qk-table-action" onClick={() => mention(m)}>Mention</button>
+                                        <button className="vc-qk-table-action" onClick={() => openUserProfile(m.id)}>View profile</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+        </Modal>
+    );
+}
+
+function openSearchMembers() {
+    const guildId = currentGuildId();
+    if (!guildId) return toast("Join a voice channel in the server first", "failure");
+    openModal(p => <ErrorBoundary><SearchMembersModal modalProps={p} guildId={guildId} /></ErrorBoundary>);
+}
+
 // ---------- bulk kick / reject ----------
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 let bulkRunning = false;
+let bulkStop = false;
 
 async function runBulk(kind: "kick" | "reject", ids: string[]) {
-    if (bulkRunning) return showToast("A bulk action is already running", "failure");
+    if (bulkRunning) return toast("A bulk action is already running", "failure");
     bulkRunning = true;
+    bulkStop = false;
     try {
         const per = Math.max(1, Math.floor(settings.store.bulkPerCommand));
         const template = getCommand(kind);
         for (let i = 0; i < ids.length; i += per) {
+            if (bulkStop) return toast(`Stopped after ${i} of ${ids.length}`, "failure");
             const chunk = ids.slice(i, i + per);
             if (!sendCommand(template.replaceAll("{id}", chunk.join(" ")))) return;
             chunk.forEach(id => noteRemoved(kind, id, true));
             if (i + per < ids.length) await sleep(Math.max(0.5, settings.store.bulkDelay) * 1000);
         }
-        showToast(`${PAST[kind]} ${ids.length} user${ids.length === 1 ? "" : "s"}`, "success");
+        toast(`${PAST[kind]} ${ids.length} user${ids.length === 1 ? "" : "s"}`, "success");
     } finally {
         bulkRunning = false;
     }
 }
 
 async function runBulkPermit(ids: string[]) {
-    if (bulkRunning) return showToast("A bulk action is already running", "failure");
+    if (bulkRunning) return toast("A bulk action is already running", "failure");
     bulkRunning = true;
+    bulkStop = false;
     try {
         // the bot only takes one ID per permit, so one command each
         for (let i = 0; i < ids.length; i++) {
+            if (bulkStop) return toast(`Stopped after ${i} of ${ids.length}`, "failure");
             if (!permitId(ids[i])) return;
             if (i < ids.length - 1) await sleep(Math.max(0.5, settings.store.bulkDelay) * 1000);
         }
-        showToast(`Permitted ${ids.length} user${ids.length === 1 ? "" : "s"}`, "success");
+        toast(`Permitted ${ids.length} user${ids.length === 1 ? "" : "s"}`, "success");
     } finally {
         bulkRunning = false;
     }
@@ -522,6 +734,18 @@ function ServerCommandsModal({ modalProps, guildId }: { modalProps: RenderModalP
     const [prefix, setPrefix] = useState(saved.prefix ?? "");
     const [cmds, setCmds] = useState<Record<string, string>>(saved.commands ?? {});
     const guildName = GuildStore.getGuild(guildId)?.name ?? "this server";
+    const [, rerender] = useState(0);
+    const forgetDetected = () => {
+        const all: Record<string, ServerConfig> = plain(settings.store.serverCommands);
+        if (all[guildId]) {
+            delete all[guildId].detected;
+            delete all[guildId].detectedBot;
+        }
+        settings.store.serverCommands = all;
+        notifiedGuilds.delete(guildId);
+        rerender(x => x + 1);
+        toast("Forgot the detected prefix, it will be learned again from the next command", "success");
+    };
     const usedPrefix = prefix.trim() || saved.detected || settings.store.defaultPrefix || ".v";
     const [bots, setBots] = useState<BotInfo[] | null>(null);
     useEffect(() => { fetchVoiceBots(guildId).then(setBots); }, [guildId]);
@@ -536,10 +760,10 @@ function ServerCommandsModal({ modalProps, guildId }: { modalProps: RenderModalP
             if (!next.prefix && !Object.keys(commands).length && !next.detected) delete all[guildId];
             else all[guildId] = next;
             settings.store.serverCommands = all;
-            showToast(`Saved commands for ${guildName}`, "success");
+            toast(`Saved commands for ${guildName}`, "success");
         } catch (e) {
             logger.error("saving server commands failed", e);
-            showToast("Couldn't save, see console (Ctrl+Shift+I)", "failure");
+            toast("Couldn't save, see console (Ctrl+Shift+I)", "failure");
         }
         modalProps.onClose();
     };
@@ -549,7 +773,7 @@ function ServerCommandsModal({ modalProps, guildId }: { modalProps: RenderModalP
             <div className="vc-quickkick-srv">
                 <div className="vc-quickkick-srv-detect">
                     {saved.detected
-                        ? <>🔍 Auto-detected prefix: <b>{saved.detected}</b>{detectedBotName ? <> (answered by <b>{detectedBotName}</b>)</> : null}</>
+                        ? <>🔍 Auto-detected prefix: <b>{saved.detected}</b>{detectedBotName ? <> (answered by <b>{detectedBotName}</b>)</> : null} <button className="vc-quickkick-srv-forget" onClick={forgetDetected} title="Wrong prefix? Forget it and detect again">Forget</button></>
                         : <>🔍 No prefix detected yet. Use any VC command once (e.g. <b>!v lock</b>) in this server and it will be learned when the bot replies.</>}
                 </div>
                 {bots === null
@@ -583,31 +807,31 @@ function ServerCommandsModal({ modalProps, guildId }: { modalProps: RenderModalP
 
 function openServerCommands() {
     const guildId = currentGuildId();
-    if (!guildId) return showToast("Join a voice channel in the server first", "failure");
+    if (!guildId) return toast("Join a voice channel in the server first", "failure");
     openModal(p => <ErrorBoundary><ServerCommandsModal modalProps={p} guildId={guildId} /></ErrorBoundary>);
 }
 
 // ---------- prompt modal for rename / limit ----------
 
-function PromptModal({ modalProps, title, placeholder, onSubmit }: { modalProps: RenderModalProps; title: string; placeholder: string; onSubmit(v: string): void; }) {
-    const [value, setValue] = useState("");
+function PromptModal({ modalProps, title, placeholder, initial, onSubmit }: { modalProps: RenderModalProps; title: string; placeholder: string; initial?: string; onSubmit(v: string): boolean | void; }) {
+    const [value, setValue] = useState(initial ?? "");
+    // onSubmit returns false to keep the dialog open (invalid input)
     const submit = () => {
         const v = inputText(value).trim();
-        if (!v) return showToast("Type something first", "failure");
-        onSubmit(v);
-        modalProps.onClose();
+        if (!v) return toast("Type something first", "failure");
+        if (onSubmit(v) !== false) modalProps.onClose();
     };
     return (
         <Modal {...modalProps} title={title} actions={[{ text: "Send", variant: "primary", onClick: submit }]}>
-            <div style={{ padding: "8px 0" }} onKeyDown={e => e.key === "Enter" && submit()}>
-                <TextInput value={value} onChange={v => setValue(inputText(v))} placeholder={placeholder} autoFocus />
+            <div style={{ padding: "8px 0" }}>
+                <TextInput value={value} onChange={v => setValue(inputText(v))} onEnter={submit} placeholder={placeholder} autoFocus />
             </div>
         </Modal>
     );
 }
 
-const prompt = (title: string, placeholder: string, onSubmit: (v: string) => void) =>
-    openModal(p => <ErrorBoundary><PromptModal modalProps={p} title={title} placeholder={placeholder} onSubmit={onSubmit} /></ErrorBoundary>);
+const prompt = (title: string, placeholder: string, onSubmit: (v: string) => boolean | void, initial?: string) =>
+    openModal(p => <ErrorBoundary><PromptModal modalProps={p} title={title} placeholder={placeholder} initial={initial} onSubmit={onSubmit} /></ErrorBoundary>);
 
 // ---------- ✕ button next to voice users (#2) ----------
 
@@ -623,9 +847,9 @@ async function setVoiceFlag(user: User, flag: "mute" | "deaf", value: boolean) {
     if (!chan?.guild_id) return;
     try {
         await RestAPI.patch({ url: `/guilds/${chan.guild_id}/members/${user.id}`, body: { [flag]: value } });
-        showToast(`${value ? "Force " : "Un-"}${flag === "mute" ? "muted" : "deafened"} ${displayName(user)}`, "success");
+        toast(`${value ? "Force " : "Un-"}${flag === "mute" ? "muted" : "deafened"} ${displayName(user)}`, "success");
     } catch (e: any) {
-        showToast(`Discord refused: ${e?.body?.message ?? e?.status ?? "no permission"}`, "failure");
+        toast(`Discord refused: ${e?.body?.message ?? e?.status ?? "no permission"}`, "failure");
     }
 }
 
@@ -669,14 +893,17 @@ function KickButton({ user }: { user: User; }) {
 
     const label = action === "kick" ? "Kick" : "Reject";
     return (
-        <Tooltip text={seenText(user.id)}>
+        <Tooltip text={<>{label} {displayName(user)} · right-click for more<br />{seenText(user.id)}</>}>
             {props => (
                 <span
                     {...props}
                     className="vc-quickkick-btn"
                     role="button"
+                    tabIndex={0}
+                    aria-label={`${label} ${displayName(user)}`}
                     onMouseDown={e => e.stopPropagation()}
-                    onClick={e => { e.preventDefault(); e.stopPropagation(); runUserAction(action as UserAction, user); }}
+                    onClick={e => { e.preventDefault(); e.stopPropagation(); quickAction(user); }}
+                    onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); quickAction(user); } }}
                     onContextMenu={e => { e.preventDefault(); e.stopPropagation(); openUserMenu(e, user); }}
                 >
                     ✕
@@ -715,21 +942,26 @@ function decorateTiles() {
         const show = !!id && id !== me && !!inVc[id];
 
         if (!show) return void old?.remove();
-        if (old?.dataset.uid === id) return;
+        const title = `${quickLabel()} · right-click for more · ${seenText(id!)}`;
+        if (old?.dataset.uid === id) {
+            if (old.title !== title) old.title = title;
+            return;
+        }
         old?.remove();
 
         const btn = document.createElement("span");
         btn.className = "vc-quickkick-tile-btn";
         btn.dataset.uid = id!;
         btn.textContent = "✕";
-        btn.title = `${settings.store.action === "kick" ? "Kick" : "Reject"} · right-click for more · ${seenText(id!)}`;
+        btn.title = title;
+        btn.setAttribute("role", "button");
         const stop = (e: Event) => { e.preventDefault(); e.stopPropagation(); };
         btn.addEventListener("mousedown", e => e.stopPropagation());
         btn.addEventListener("dblclick", stop);
         btn.addEventListener("click", e => {
             stop(e);
             const user = UserStore.getUser(id!);
-            if (user) runUserAction(settings.store.action as UserAction, user);
+            if (user) quickAction(user);
         });
         btn.addEventListener("contextmenu", e => {
             stop(e);
@@ -788,7 +1020,9 @@ const PANEL_ICONS: Record<string, string[]> = {
     permit: ["M9 12l2 2 4-4", "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"],
     recent: ["M3 12a9 9 0 1 0 3-6.7L3 8", "M3 3v5h5", "M12 8v4l3 2"],
     gear: ["M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z", "M19.4 13.5a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1v.2a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H23a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"],
-    log: ["M8 6h13M8 12h13M8 18h13", "M3 6h.01M3 12h.01M3 18h.01"]
+    log: ["M8 6h13M8 12h13M8 18h13", "M3 6h.01M3 12h.01M3 18h.01"],
+    stop: ["M6 6h12v12H6z"],
+    search: ["M10.5 18a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15z", "M21 21l-4.35-4.35"]
 };
 
 function PanelIcon({ name }: { name: string; }) {
@@ -800,44 +1034,98 @@ function PanelIcon({ name }: { name: string; }) {
     );
 }
 
-type Tool = { icon: string; name: string; keep?: boolean; run(close: () => void): void; };
+type Tool = { icon: string; name: string; keep?: boolean; on?: boolean; badge?: number; danger?: boolean; run(): void; };
 
-function VcPanelContent({ close }: { close: () => void; }) {
+// live state of the VC, read from the channel itself so it's right no matter who or what changed it
+function useVcStatus(channelId: string) {
+    const key = useStateFromStores([ChannelStore, VoiceStateStore], () => {
+        const ch = ChannelStore.getChannel(channelId) as any;
+        if (!ch) return "";
+        let deny = 0n;
+        try { deny = BigInt(ch.permissionOverwrites?.[ch.guild_id]?.deny ?? 0); } catch { /* unknown shape: treat as open */ }
+        const count = Object.keys(VoiceStateStore.getVoiceStatesForChannel(channelId) ?? {}).length;
+        return [ch.name ?? "", count, ch.userLimit ?? 0, (deny & PermissionsBits.CONNECT) !== 0n ? 1 : 0, (deny & PermissionsBits.VIEW_CHANNEL) !== 0n ? 1 : 0].join("\n");
+    }, [channelId]);
+    const [name = "", count = "0", limit = "0", locked, hidden] = key.split("\n");
+    return { name, count: Number(count), limit: Number(limit), locked: locked === "1", hidden: hidden === "1" };
+}
 
-    const tools: Tool[] = [
-        { icon: "lock", name: "Lock", keep: true, run: () => runChannelAction("lock") },
-        { icon: "unlock", name: "Unlock", keep: true, run: () => runChannelAction("unlock") },
-        { icon: "hide", name: "Hide", keep: true, run: () => runChannelAction("hide") },
-        { icon: "unhide", name: "Unhide", keep: true, run: () => runChannelAction("unhide") },
-        { icon: "claim", name: "Claim", keep: true, run: () => runChannelAction("claim") },
-        { icon: "rename", name: "Rename", run: c => { c(); prompt("Rename VC", "GIRLS ONLY", v => runChannelAction("name", v)); } },
-        { icon: "limit", name: "User limit", run: c => { c(); prompt("User limit", "e.g. 5 (0 = no limit)", v => runChannelAction("limit", v)); } },
-        { icon: "bulk", name: "Bulk kick / reject / permit", run: c => { c(); openModal(p => <ErrorBoundary><BulkModal modalProps={p} /></ErrorBoundary>); } },
-        { icon: "cowner", name: "Add co-owner", run: c => { c(); prompt("Add co-owner", "User ID or @mention", v => {
-            const id = v.match(/\d{15,21}/)?.[0];
-            if (!id) return showToast("That's not a user ID", "failure");
-            runUserAction("cowner", UserStore.getUser(id) ?? ({ id, username: id } as any as User));
-        }); } },
-        { icon: "permit", name: "Permit by ID", run: c => { c(); prompt("Permit user", "User ID or @mention", v => {
-            const id = v.match(/\d{15,21}/)?.[0];
-            id ? permitId(id) : showToast("That's not a user ID", "failure");
-        }); } },
-        ...(removed.size > 0 ? [{ icon: "recent", name: "Permit recently removed", run: (c: () => void) => { c(); openModal(p => <ErrorBoundary><BulkModal modalProps={p} /></ErrorBoundary>); } }] : []),
-        { icon: "gear", name: "Server commands", run: c => { c(); openServerCommands(); } },
-        { icon: "log", name: "Join log", run: c => { c(); openModal(p => <ErrorBoundary><JoinLogModal modalProps={p} /></ErrorBoundary>); } }
+const openBulk = () => openModal(p => <ErrorBoundary><BulkModal modalProps={p} /></ErrorBoundary>);
+
+function VcPanelContent({ channelId, close }: { channelId: string; close: () => void; }) {
+    const st = useVcStatus(channelId);
+    const idPrompt = (title: string, onId: (id: string) => void) => prompt(title, "User ID or @mention", v => {
+        const id = v.match(/\d{15,21}/)?.[0];
+        if (!id) { toast("That's not a user ID", "failure"); return false; }
+        onId(id);
+    });
+
+    const sections: { label: string; tools: Tool[]; }[] = [
+        {
+            label: "Channel",
+            tools: [
+                { icon: "lock", name: "Lock", keep: true, on: st.locked, run: () => runChannelAction("lock") },
+                { icon: "unlock", name: "Unlock", keep: true, run: () => runChannelAction("unlock") },
+                { icon: "hide", name: "Hide", keep: true, on: st.hidden, run: () => runChannelAction("hide") },
+                { icon: "unhide", name: "Unhide", keep: true, run: () => runChannelAction("unhide") },
+                { icon: "rename", name: "Rename", run: () => prompt("Rename VC", "New channel name", v => runChannelAction("name", v), st.name) },
+                {
+                    icon: "limit", name: "User limit", run: () => prompt("User limit", "0 to 99 (0 = no limit)", v => {
+                        const n = Number(v);
+                        if (!Number.isInteger(n) || n < 0 || n > 99) { toast("Type a number from 0 to 99", "failure"); return false; }
+                        runChannelAction("limit", String(n));
+                    }, st.limit ? String(st.limit) : "")
+                },
+                { icon: "claim", name: "Claim", keep: true, run: () => runChannelAction("claim") }
+            ]
+        },
+        {
+            label: "People",
+            tools: [
+                bulkRunning
+                    ? { icon: "stop", name: "Stop bulk action", danger: true, run: () => { bulkStop = true; } }
+                    : { icon: "bulk", name: "Bulk kick / reject / permit", run: openBulk },
+                ...(removed.size > 0 && !bulkRunning ? [{ icon: "recent", name: "Permit removed", badge: removed.size, run: openBulk }] : []),
+                { icon: "permit", name: "Permit by ID", run: () => idPrompt("Permit user", id => permitId(id)) },
+                { icon: "cowner", name: "Add co-owner", run: () => idPrompt("Add co-owner", id => runUserAction("cowner", UserStore.getUser(id) ?? ({ id, username: id } as any as User))) },
+                { icon: "search", name: "Search members", run: openSearchMembers }
+            ]
+        },
+        {
+            label: "More",
+            tools: [
+                { icon: "log", name: "Join log", badge: joinLog.length || undefined, run: () => openModal(p => <ErrorBoundary><JoinLogModal modalProps={p} /></ErrorBoundary>) },
+                { icon: "gear", name: "Server commands", run: openServerCommands }
+            ]
+        }
     ];
 
     return (
-        <div className="vc-qk-popout" role="menu">
-            {tools.map(t => (
-                <button
-                    key={t.icon}
-                    className="vc-qk-tool"
-                    onClick={() => { t.run(close); close(); }}
-                >
-                    <PanelIcon name={t.icon} />
-                    <span>{t.name}</span>
-                </button>
+        <div className="vc-qk-popout" role="menu" aria-label="VC controls">
+            <div className="vc-qk-head">
+                <span className="vc-qk-head-name" title={st.name}>{st.name || "Voice channel"}</span>
+                <span className="vc-qk-chip">{st.count}{st.limit ? ` / ${st.limit}` : ""} in VC</span>
+                {st.locked && <span className="vc-qk-chip vc-qk-chip-on">Locked</span>}
+                {st.hidden && <span className="vc-qk-chip vc-qk-chip-on">Hidden</span>}
+            </div>
+            {sections.map(s => (
+                <div key={s.label}>
+                    <div className="vc-qk-label">{s.label}</div>
+                    <div className="vc-qk-grid">
+                        {s.tools.map(t => (
+                            <button
+                                key={t.icon}
+                                role="menuitem"
+                                className={"vc-qk-tool" + (t.on ? " vc-qk-on" : "") + (t.danger ? " vc-qk-danger" : "")}
+                                onClick={() => { t.run(); if (!t.keep) close(); }}
+                            >
+                                <PanelIcon name={t.icon} />
+                                <span>{t.name}</span>
+                                {t.badge ? <span className="vc-qk-badge">{t.badge}</span> : null}
+                            </button>
+                        ))}
+                    </div>
+                </div>
             ))}
         </div>
     );
@@ -857,7 +1145,7 @@ const PanelButton: ChatBarButtonFactory = ({ channel }) => {
             shouldShow={show}
             onRequestClose={() => setShow(false)}
             targetElementRef={buttonRef}
-            renderPopout={({ closePopout }) => <ErrorBoundary><VcPanelContent close={closePopout} /></ErrorBoundary>}
+            renderPopout={({ closePopout }) => <ErrorBoundary><VcPanelContent channelId={channel.id} close={closePopout} /></ErrorBoundary>}
         >
             {() => (
                 <ChatBarButton tooltip="VC controls" onClick={() => setShow(v => !v)}>
@@ -973,6 +1261,10 @@ export default definePlugin({
         notifiedGuilds.clear();
         removed.clear();
         permitted.clear();
+        autoRejectCooldown.clear();
+        botCache.clear();
+        ownedChannel = null;
+        bulkStop = true;
     },
 
     flux: {

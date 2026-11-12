@@ -11,10 +11,16 @@ import "./ui.css";
 
 import { ModalRoot as ModalRootRaw, ModalSize } from "@utils/modal";
 import type { RenderModalProps } from "@vencord/discord-types";
-import { openModal } from "@webpack/common";
+import { openModal, showToast } from "@webpack/common";
 import type { CSSProperties, ReactNode } from "react";
 
 const ModalRoot = ModalRootRaw as any; // typed as never upstream
+
+const TOAST_VARIANTS = { success: "success", failure: "critical", message: "default" } as const;
+
+export function toast(text: string, kind: keyof typeof TOAST_VARIANTS = "message") {
+    showToast({ text, variant: TOAST_VARIANTS[kind] });
+}
 
 export interface DialogAction {
     text: string;
@@ -25,6 +31,7 @@ export interface DialogAction {
 
 interface ModalProps extends RenderModalProps {
     title: ReactNode;
+    subtitle?: ReactNode;
     size?: string;
     actions?: DialogAction[];
     children?: ReactNode;
@@ -33,13 +40,16 @@ interface ModalProps extends RenderModalProps {
 const btnClass = (v?: string) =>
     "vc-bm-btn " + (v === "primary" ? "vc-bm-primary" : v?.includes("critical") || v === "danger" ? "vc-bm-danger" : "vc-bm-secondary");
 
-export function Modal({ title, size, actions, children, ...modalProps }: ModalProps) {
+export function Modal({ title, subtitle, size, actions, children, ...modalProps }: ModalProps) {
     const wide = size === "md" || size === "lg";
     return (
         <ModalRoot {...modalProps} size={wide ? ModalSize.MEDIUM : ModalSize.SMALL} className="vc-bm-root">
             <div className="vc-bm">
                 <div className="vc-bm-head">
-                    <div className="vc-bm-title">{title}</div>
+                    <div className="vc-bm-titles">
+                        <div className="vc-bm-title">{title}</div>
+                        {subtitle ? <div className="vc-bm-sub">{subtitle}</div> : null}
+                    </div>
                     <button className="vc-bm-x" onClick={modalProps.onClose} aria-label="Close">
                         <svg viewBox="0 0 24 24" width={18} height={18} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
                     </button>
@@ -65,8 +75,18 @@ export function Text({ variant = "", style, className, children }: { variant?: s
     return <div className={cls.join(" ")} style={style}>{children}</div>;
 }
 
-export function TextInput({ value, onChange, placeholder, autoFocus }: { value: string; onChange(v: string): void; placeholder?: string; autoFocus?: boolean; }) {
-    return <input className="vc-bm-input" value={value} placeholder={placeholder} autoFocus={autoFocus} onChange={e => onChange(e.currentTarget.value)} />;
+export function TextInput({ value, onChange, onEnter, placeholder, autoFocus, maxLength }: { value: string; onChange(v: string): void; onEnter?(): void; placeholder?: string; autoFocus?: boolean; maxLength?: number; }) {
+    return (
+        <input
+            className="vc-bm-input"
+            value={value}
+            placeholder={placeholder}
+            autoFocus={autoFocus}
+            maxLength={maxLength}
+            onChange={e => onChange(e.currentTarget.value)}
+            onKeyDown={e => { if (e.key === "Enter" && onEnter) { e.preventDefault(); onEnter(); } }}
+        />
+    );
 }
 
 /** black confirm dialog. onCancel also runs when it's closed with ×, Esc or a click outside */

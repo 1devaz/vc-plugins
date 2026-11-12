@@ -12,7 +12,14 @@
     white-space: nowrap;
     cursor: pointer;
     flex-shrink: 0;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
+
+.vc-vctagger-badge:hover { filter: brightness(1.12); }
+.vc-vctagger-static { margin-left: 0; cursor: default; }
+.vc-vctagger-static:hover { filter: none; }
 
 .vc-vctagger-compact {
     font-size: 10px;
@@ -41,6 +48,172 @@
     line-height: 20px;
     padding: 0 7px;
     margin: 0;
-    pointer-events: none;
     box-shadow: 0 2px 6px rgb(0 0 0 / 40%);
 }
+
+/* ---------- tag editor ---------- */
+.vc-vctagger-hint {
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgb(255 255 255 / 8%);
+    color: rgb(255 255 255 / 80%);
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.vc-vctagger-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.vc-vctagger-chip {
+    padding: 3px 9px;
+    border: 1px solid rgb(255 255 255 / 16%);
+    border-radius: 999px;
+    background: transparent;
+    color: #fff;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.vc-vctagger-chip:hover { background: rgb(255 255 255 / 10%); }
+.vc-vctagger-chip-on { border-color: #fff; background: #fff; color: #000; }
+.vc-vctagger-chip-on:hover { background: #fff; }
+
+.vc-vctagger-swatch {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 2px solid transparent;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: transform .12s;
+}
+
+.vc-vctagger-swatch:hover { transform: scale(1.1); }
+.vc-vctagger-swatch-on { border-color: #fff; box-shadow: 0 0 0 2px #000 inset; }
+.vc-vctagger-preview { margin-left: auto; }
+.vc-vctagger-preview .vc-vctagger-badge { margin: 0; cursor: default; }
+
+/* ---------- manage tags ---------- */
+.vc-vctagger-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0 10px;
+}
+
+.vc-vctagger-toolbar .vc-bm-input { flex: 1; min-width: 0; }
+
+.vc-vctagger-tool {
+    flex-shrink: 0;
+    padding: 7px 11px;
+    border: 1px solid rgb(255 255 255 / 16%);
+    border-radius: 8px;
+    background: transparent;
+    color: #fff;
+    font-size: 12.5px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.vc-vctagger-tool:hover:not(:disabled) { background: #fff; color: #000; }
+.vc-vctagger-tool:disabled { opacity: .4; cursor: default; }
+.vc-vctagger-tool-danger:hover:not(:disabled) { border-color: #da373c; background: #da373c; color: #fff; }
+
+.vc-vctagger-import {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+    padding-bottom: 10px;
+}
+
+.vc-vctagger-import textarea {
+    width: 100%;
+    min-height: 90px;
+    box-sizing: border-box;
+    padding: 9px 11px;
+    border: 1px solid rgb(255 255 255 / 14%);
+    border-radius: 8px;
+    outline: none;
+    background: #0d0d0d;
+    color: #fff;
+    font-family: var(--font-code, Consolas, monospace);
+    font-size: 12px;
+    resize: vertical;
+}
+
+.vc-vctagger-empty {
+    padding: 28px 12px;
+    color: rgb(255 255 255 / 55%);
+    font-size: 14px;
+    text-align: center;
+}
+
+.vc-vctagger-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 6px;
+    border-bottom: 1px solid rgb(255 255 255 / 6%);
+    border-radius: 6px;
+}
+
+.vc-vctagger-row:hover { background: rgb(255 255 255 / 5%); }
+
+.vc-vctagger-avatar {
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    object-fit: cover;
+    cursor: pointer;
+}
+
+.vc-vctagger-avatar-none { background: rgb(255 255 255 / 12%); cursor: default; }
+.vc-vctagger-row-main { flex: 1; min-width: 0; }
+.vc-vctagger-row-line { display: flex; align-items: center; gap: 8px; }
+
+.vc-vctagger-row-name {
+    overflow: hidden;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vc-vctagger-row-meta {
+    overflow: hidden;
+    color: rgb(255 255 255 / 55%);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vc-vctagger-pager {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding-top: 12px;
+    color: rgb(255 255 255 / 75%);
+    font-size: 13px;
+}
+
+/* button on the plugin's settings page (outside our black dialogs) */
+.vc-vctagger-open {
+    padding: 8px 14px;
+    border: none;
+    border-radius: 8px;
+    background: var(--brand-500, #5865f2);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.vc-vctagger-open:hover { filter: brightness(1.1); }
