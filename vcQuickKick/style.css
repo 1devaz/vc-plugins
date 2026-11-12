@@ -468,3 +468,26 @@
 .vc-quickkick-srv-forget:hover { background: #fff; color: #000; }
 
 .vc-quickkick-btn:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+
+/* Find-members: server chips with icon + short name */
+.vc-qk-servers { display: flex; flex-wrap: wrap; gap: 6px; }
+.vc-qk-server { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--text-default, #dbdee1); }
+
+.vc-qk-server-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.vc-qk-server-letter {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgb(255 255 255 / 15%);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+}

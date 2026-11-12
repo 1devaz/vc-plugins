@@ -555,11 +555,29 @@ function SearchGlassIcon() {
     );
 }
 
-interface GlobalHit { m: FoundMember; guilds: string[]; }
+interface ServerBrief { id: string; name: string; short: string; icon: string | null; }
+interface GlobalHit { m: FoundMember; servers: ServerBrief[]; }
 
-// Search every server you're in. Discord only hands a normal account the members it has loaded
-// (voice, opened member lists, cached), so this finds those across all your servers and shows
-// which server each match is in. Anyone not loaded is still reachable by their exact user ID.
+const userToMember = (u: any, guildId?: string): FoundMember => ({
+    id: u.id, username: u.username, globalName: u.globalName,
+    nick: guildId ? (GuildMemberStore.getNick(guildId, u.id) ?? undefined) : undefined, avatar: u.avatar
+});
+
+function serverBrief(gid: string, guild: any): ServerBrief {
+    const name = guild?.name ?? "Unknown server";
+    return {
+        id: gid,
+        name,
+        short: name.trim().split(/\s+/)[0] || name,
+        icon: guild?.icon ? `https://cdn.discordapp.com/icons/${gid}/${guild.icon}.webp?size=32` : null
+    };
+}
+
+const nameMatches = (m: FoundMember, lower: string) =>
+    m.username.toLowerCase().includes(lower) || m.globalName?.toLowerCase().includes(lower) || m.nick?.toLowerCase().includes(lower);
+
+// Search every server you're in, then every user your client has cached anywhere (friends, DMs,
+// anyone you've seen). Shows which of your servers each match is in. By-ID resolves anyone.
 async function searchAllServers(query: string): Promise<GlobalHit[]> {
     const raw = query.trim();
     if (!raw) return [];
@@ -568,24 +586,37 @@ async function searchAllServers(query: string): Promise<GlobalHit[]> {
     const hits = new Map<string, GlobalHit>();
     const guilds = GuildStore.getGuilds();
 
+    const add = (m: FoundMember, server?: ServerBrief) => {
+        const hit = hits.get(m.id) ?? { m, servers: [] };
+        if (server && !hit.servers.some(s => s.id === server.id)) hit.servers.push(server);
+        hits.set(m.id, hit);
+    };
+
+    // 1) people loaded in each of your servers (shows the server, with its name + nickname there)
     for (const gid in guilds) {
-        const gname = guilds[gid]?.name ?? "Unknown server";
+        const brief = serverBrief(gid, guilds[gid]);
         for (const id of byId ? [raw] : localCandidateIds(gid)) {
             const m = memberOf(gid, id);
-            if (!m) continue;
-            if (!byId && !(m.username.toLowerCase().includes(lower) || m.globalName?.toLowerCase().includes(lower) || m.nick?.toLowerCase().includes(lower))) continue;
-            const hit = hits.get(id) ?? { m, guilds: [] };
-            if (!hit.guilds.includes(gname)) hit.guilds.push(gname);
-            hits.set(id, hit);
+            if (m && (byId || nameMatches(m, lower))) add(m, brief);
         }
-        if (hits.size >= 80) break;
     }
 
-    // an ID you don't share a server with still resolves, so you can act on anyone
+    // 2) widen name search to every user cached anywhere (catches people not in a loaded member list)
+    if (!byId) {
+        const users = (UserStore as any).getUsers?.() ?? {};
+        for (const id in users) {
+            if (hits.has(id)) continue;
+            const m = userToMember(users[id]);
+            if (nameMatches(m, lower)) add(m);
+            if (hits.size >= 100) break;
+        }
+    }
+
+    // 3) a bare ID you share no server with still resolves, so you can act on anyone
     if (byId && !hits.has(raw)) {
         try {
             const u = await UserUtils.getUser(raw) as any;
-            if (u) hits.set(raw, { m: { id: u.id, username: u.username, globalName: u.globalName, avatar: u.avatar }, guilds: [] });
+            if (u) add(userToMember(u));
         } catch { /* not a real user id */ }
     }
 
@@ -622,7 +653,7 @@ function SearchMembersModal({ modalProps }: { modalProps: RenderModalProps; }) {
         <Modal {...modalProps} title="Find members" subtitle="Across every server you're in" size="md">
             <TextInput value={query} onChange={v => setQuery(inputText(v))} placeholder="Name or user ID…" autoFocus />
             {loading && <Text variant="text-sm/normal" style={{ marginTop: 8 }}>Searching…</Text>}
-            {!loading && results !== null && results.length === 0 && <Text variant="text-sm/normal" style={{ marginTop: 8 }}>No match. Name search covers people your client has loaded — voice channels and member lists you've opened — across your servers. Open a server's members sidebar to load more, or paste an exact user ID.</Text>}
+            {!loading && results !== null && results.length === 0 && <Text variant="text-sm/normal" style={{ marginTop: 8 }}>No match. Try their user ID or exact username — people can use a different nickname in each server.</Text>}
             {!loading && results !== null && results.length > 0 && (
                 <table className="vc-qk-table" style={{ marginTop: 10 }}>
                     <thead>
@@ -634,7 +665,7 @@ function SearchMembersModal({ modalProps }: { modalProps: RenderModalProps; }) {
                         </tr>
                     </thead>
                     <tbody>
-                        {results.map(({ m, guilds }) => (
+                        {results.map(({ m, servers }) => (
                             <tr key={m.id}>
                                 <td>
                                     <div className="vc-qk-table-user">
@@ -645,7 +676,20 @@ function SearchMembersModal({ modalProps }: { modalProps: RenderModalProps; }) {
                                         </div>
                                     </div>
                                 </td>
-                                <td className="vc-quickkick-log-meta">{guilds.length ? guilds.join(", ") : "—"}</td>
+                                <td>
+                                    {servers.length ? (
+                                        <div className="vc-qk-servers">
+                                            {servers.map(s => (
+                                                <span key={s.id} className="vc-qk-server" title={s.name}>
+                                                    {s.icon
+                                                        ? <img className="vc-qk-server-icon" src={s.icon} alt="" loading="lazy" />
+                                                        : <span className="vc-qk-server-icon vc-qk-server-letter">{s.short[0]}</span>}
+                                                    <span>{s.short}</span>
+                                                </span>
+                                            ))}
+                                        </div>
+                                    ) : <span className="vc-quickkick-log-meta">—</span>}
+                                </td>
                                 <td><span className="vc-quickkick-log-id" title="Click to mention them in the chat box" onClick={() => mention(m)}>{m.id}</span></td>
                                 <td>
                                     <div className="vc-qk-table-actions">
