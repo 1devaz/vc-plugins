@@ -16,7 +16,7 @@ import { Logger } from "@utils/Logger";
 import definePlugin, { IconProps, OptionType } from "@utils/types";
 import type { RenderModalProps, User } from "@vencord/discord-types";
 import {
-    ChannelStore, ContextMenuApi, FluxDispatcher, GuildMemberStore, GuildStore, Menu, MessageActions, openModal, PermissionsBits, PermissionStore, Popout, RestAPI, SelectedChannelStore, SnowflakeUtils,
+    ChannelMemberStore, ChannelStore, ContextMenuApi, FluxDispatcher, GuildMemberStore, GuildStore, Menu, MessageActions, openModal, PermissionsBits, PermissionStore, Popout, RestAPI, SelectedChannelStore,
     Tooltip, UserStore, UserUtils, useEffect, useRef, useState, useStateFromStores, VoiceStateStore
 } from "@webpack/common";
 
@@ -516,29 +516,60 @@ function apiAvatarUrl(m: FoundMember) {
 
 const ID_RE = /^\d{15,21}$/;
 
+const memberOf = (guildId: string, id: string): FoundMember | null => {
+    const u = UserStore.getUser(id) as any;
+    if (!u) return null;
+    return { id, username: u.username, globalName: u.globalName, nick: GuildMemberStore.getNick(guildId, id) ?? undefined, avatar: u.avatar };
+};
+
+// Everyone the client already has for this guild: people in its voice channels + any loaded members.
+// Discord's /members/search endpoint is bot-only and the gateway name query isn't exposed to user
+// clients, so a VC tool searches who's actually here — which is who you'd kick / permit anyway.
+function localCandidateIds(guildId: string): string[] {
+    const ids = new Set<string>();
+    try { for (const uid of Object.keys(VoiceStateStore.getVoiceStates(guildId) ?? {})) ids.add(uid); } catch { /* store shape */ }
+    try { for (const uid of GuildMemberStore.getMemberIds(guildId)) ids.add(uid); } catch { /* none loaded */ }
+    // the server member list (sidebar) of channels you've opened — many more people than just voice
+    for (const cid of [SelectedChannelStore.getChannelId(), SelectedChannelStore.getVoiceChannelId()]) {
+        if (!cid) continue;
+        try {
+            for (const row of (ChannelMemberStore.getRows(guildId, cid) ?? []) as any[]) {
+                const id = row?.user?.id ?? row?.userId;
+                if (id) ids.add(id);
+            }
+        } catch { /* list not open */ }
+    }
+    return [...ids];
+}
+
 async function searchGuildMembers(guildId: string, query: string): Promise<FoundMember[]> {
     const q = query.trim();
     if (!q) return [];
     const found = new Map<string, FoundMember>();
 
+    // by ID: resolve from the stores, else fetch the user globally (works even outside this server)
     if (ID_RE.test(q)) {
-        try {
-            const { body } = await RestAPI.get({ url: `/guilds/${guildId}/members/${q}` });
-            if (body?.user) found.set(body.user.id, { id: body.user.id, username: body.user.username, globalName: body.user.global_name, nick: body.nick, avatar: body.user.avatar });
-        } catch {
-            // not a member of this guild, or no permission — fall through to the name search
+        let m = memberOf(guildId, q);
+        if (!m) {
+            try {
+                const u = await UserUtils.getUser(q) as any;
+                if (u) m = { id: u.id, username: u.username, globalName: u.globalName, nick: GuildMemberStore.getNick(guildId, u.id) ?? undefined, avatar: u.avatar };
+            } catch { /* not a real user id */ }
         }
+        if (m) found.set(q, m);
+        return [...found.values()];
     }
 
-    try {
-        const { body } = await RestAPI.get({ url: `/guilds/${guildId}/members/search`, query: { query: q, limit: 25 } });
-        for (const m of body ?? []) {
-            if (!found.has(m.user.id)) found.set(m.user.id, { id: m.user.id, username: m.user.username, globalName: m.user.global_name, nick: m.nick, avatar: m.user.avatar });
+    // by name: substring match on username / display name / server nickname
+    const lower = q.toLowerCase();
+    for (const id of localCandidateIds(guildId)) {
+        const m = memberOf(guildId, id);
+        if (!m) continue;
+        if (m.username.toLowerCase().includes(lower) || m.globalName?.toLowerCase().includes(lower) || m.nick?.toLowerCase().includes(lower)) {
+            found.set(id, m);
+            if (found.size >= 50) break;
         }
-    } catch (e) {
-        logger.warn("member search failed", e);
     }
-
     return [...found.values()];
 }
 
@@ -570,9 +601,9 @@ function SearchMembersModal({ modalProps, guildId }: { modalProps: RenderModalPr
 
     return (
         <Modal {...modalProps} title="Search members" size="md">
-            <TextInput value={query} onChange={v => setQuery(inputText(v))} placeholder="User ID, username or nickname…" autoFocus />
+            <TextInput value={query} onChange={v => setQuery(inputText(v))} placeholder="Name of someone in voice, or any user ID…" autoFocus />
             {loading && <Text variant="text-sm/normal" style={{ marginTop: 8 }}>Searching…</Text>}
-            {!loading && results !== null && results.length === 0 && <Text variant="text-sm/normal" style={{ marginTop: 8 }}>No members matched.</Text>}
+            {!loading && results !== null && results.length === 0 && <Text variant="text-sm/normal" style={{ marginTop: 8 }}>No match. Name search covers people in this server's voice channels and its member list (open the members sidebar to load more) — for anyone else, paste their exact user ID.</Text>}
             {!loading && results !== null && results.length > 0 && (
                 <table className="vc-qk-table" style={{ marginTop: 10 }}>
                     <thead>
