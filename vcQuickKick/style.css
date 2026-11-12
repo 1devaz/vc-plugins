@@ -492,3 +492,30 @@
     font-weight: 700;
     text-transform: uppercase;
 }
+
+/* Find-members: current voice-channel line + jump button */
+.vc-qk-voice {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    max-width: 240px;
+    overflow: hidden;
+    color: #23a55a;
+    font-size: 12px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.vc-qk-voice:hover { text-decoration: underline; }
+
+.vc-qk-action-voice {
+    border-color: #23a55a;
+    color: #23a55a;
+}
+
+.vc-qk-action-voice:hover {
+    background: #23a55a;
+    color: #fff;
+}

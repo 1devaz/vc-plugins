@@ -16,7 +16,7 @@ import { Logger } from "@utils/Logger";
 import definePlugin, { IconProps, OptionType } from "@utils/types";
 import type { RenderModalProps, User } from "@vencord/discord-types";
 import {
-    ChannelMemberStore, ChannelStore, ContextMenuApi, FluxDispatcher, GuildMemberStore, GuildStore, Menu, MessageActions, openModal, PermissionsBits, PermissionStore, Popout, RestAPI, SelectedChannelStore,
+    ChannelMemberStore, ChannelRouter, ChannelStore, ContextMenuApi, FluxDispatcher, GuildMemberStore, GuildStore, Menu, MessageActions, openModal, PermissionsBits, PermissionStore, Popout, RestAPI, SelectedChannelStore,
     Tooltip, UserStore, UserUtils, useEffect, useRef, useState, useStateFromStores, VoiceStateStore
 } from "@webpack/common";
 
@@ -576,6 +576,20 @@ function serverBrief(gid: string, guild: any): ServerBrief {
 const nameMatches = (m: FoundMember, lower: string) =>
     m.username.toLowerCase().includes(lower) || m.globalName?.toLowerCase().includes(lower) || m.nick?.toLowerCase().includes(lower);
 
+interface VoiceLoc { channelId: string; name: string; server: string; }
+
+// which voice channel (if any) this user is in right now, across the servers you can see
+function voiceLocation(userId: string): VoiceLoc | null {
+    const cid = VoiceStateStore.getVoiceStateForUser(userId)?.channelId;
+    if (!cid) return null;
+    const ch = ChannelStore.getChannel(cid) as any;
+    if (!ch) return null;
+    const server = ch.guild_id ? (GuildStore.getGuild(ch.guild_id)?.name ?? "") : "";
+    return { channelId: cid, name: ch.name ?? "voice", server };
+}
+
+const goToChannel = (channelId: string, close: () => void) => { ChannelRouter.transitionToChannel(channelId); close(); };
+
 // Search every server you're in, then every user your client has cached anywhere (friends, DMs,
 // anyone you've seen). Shows which of your servers each match is in. By-ID resolves anyone.
 async function searchAllServers(query: string): Promise<GlobalHit[]> {
@@ -650,7 +664,7 @@ function SearchMembersModal({ modalProps }: { modalProps: RenderModalProps; }) {
     };
 
     return (
-        <Modal {...modalProps} title="Find members" subtitle="Across every server you're in" size="md">
+        <Modal {...modalProps} title="Find members" subtitle="Across every server you're in — people in a voice channel show up first" size="md">
             <TextInput value={query} onChange={v => setQuery(inputText(v))} placeholder="Name or user ID…" autoFocus />
             {loading && <Text variant="text-sm/normal" style={{ marginTop: 8 }}>Searching…</Text>}
             {!loading && results !== null && results.length === 0 && <Text variant="text-sm/normal" style={{ marginTop: 8 }}>No match. Try their user ID or exact username — people can use a different nickname in each server.</Text>}
@@ -665,7 +679,10 @@ function SearchMembersModal({ modalProps }: { modalProps: RenderModalProps; }) {
                         </tr>
                     </thead>
                     <tbody>
-                        {results.map(({ m, servers }) => (
+                        {[...results]
+                            .map(h => ({ ...h, voice: voiceLocation(h.m.id) }))
+                            .sort((a, b) => Number(!!b.voice) - Number(!!a.voice))
+                            .map(({ m, servers, voice }) => (
                             <tr key={m.id}>
                                 <td>
                                     <div className="vc-qk-table-user">
@@ -673,6 +690,13 @@ function SearchMembersModal({ modalProps }: { modalProps: RenderModalProps; }) {
                                         <div className="vc-qk-table-namecol">
                                             <span className="vc-qk-table-link" title="Click to view profile" onClick={() => openUserProfile(m.id)}>{m.globalName ?? m.username}</span>
                                             <span className="vc-quickkick-log-meta">@{m.username}</span>
+                                            {voice && (
+                                                <span
+                                                    className="vc-qk-voice"
+                                                    title={`In voice: ${voice.name}${voice.server ? ` · ${voice.server}` : ""} — click to go there`}
+                                                    onClick={() => goToChannel(voice.channelId, modalProps.onClose)}
+                                                >🔊 {voice.name}{voice.server ? ` · ${voice.server}` : ""}</span>
+                                            )}
                                         </div>
                                     </div>
                                 </td>
@@ -692,6 +716,7 @@ function SearchMembersModal({ modalProps }: { modalProps: RenderModalProps; }) {
                                 <td><span className="vc-quickkick-log-id" title="Click to mention them in the chat box" onClick={() => mention(m)}>{m.id}</span></td>
                                 <td>
                                     <div className="vc-qk-table-actions">
+                                        {voice && <button className="vc-qk-table-action vc-qk-action-voice" onClick={() => goToChannel(voice.channelId, modalProps.onClose)}>Go to VC</button>}
                                         <button className="vc-qk-table-action" onClick={() => mention(m)}>Mention</button>
                                         <button className="vc-qk-table-action" onClick={() => openUserProfile(m.id)}>Profile</button>
                                     </div>
