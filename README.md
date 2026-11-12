@@ -1,5 +1,7 @@
 # VC Plugins for Vencord
 
+![VC Plugins](screenshots/banner.png)
+
 Four Discord plugins for managing your voice channel: **VcQuickKick**, **VcTagger**, **SafeSend** and **ColorText**.
 
 ### 🔵 1 · Reject with one click
