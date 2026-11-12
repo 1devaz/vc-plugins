@@ -20,6 +20,8 @@ import {
     Tooltip, UserStore, UserUtils, useEffect, useRef, useState, useStateFromStores, VoiceStateStore
 } from "@webpack/common";
 
+import { findComponentByCodeLazy } from "@webpack";
+
 import { confirmDialog, Modal, Text, TextInput, toast } from "./ui";
 
 const logger = new Logger("VcQuickKick");
@@ -542,40 +544,57 @@ function localCandidateIds(guildId: string): string[] {
     return [...ids];
 }
 
-async function searchGuildMembers(guildId: string, query: string): Promise<FoundMember[]> {
-    const q = query.trim();
-    if (!q) return [];
-    const found = new Map<string, FoundMember>();
+const HeaderBarIcon = findComponentByCodeLazy(".HEADER_BAR_BADGE_BOTTOM,", 'position:"bottom"');
 
-    // by ID: resolve from the stores, else fetch the user globally (works even outside this server)
-    if (ID_RE.test(q)) {
-        let m = memberOf(guildId, q);
-        if (!m) {
-            try {
-                const u = await UserUtils.getUser(q) as any;
-                if (u) m = { id: u.id, username: u.username, globalName: u.globalName, nick: GuildMemberStore.getNick(guildId, u.id) ?? undefined, avatar: u.avatar };
-            } catch { /* not a real user id */ }
-        }
-        if (m) found.set(q, m);
-        return [...found.values()];
-    }
-
-    // by name: substring match on username / display name / server nickname
-    const lower = q.toLowerCase();
-    for (const id of localCandidateIds(guildId)) {
-        const m = memberOf(guildId, id);
-        if (!m) continue;
-        if (m.username.toLowerCase().includes(lower) || m.globalName?.toLowerCase().includes(lower) || m.nick?.toLowerCase().includes(lower)) {
-            found.set(id, m);
-            if (found.size >= 50) break;
-        }
-    }
-    return [...found.values()];
+function SearchGlassIcon() {
+    return (
+        <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="7" />
+            <path d="M21 21l-4.3-4.3" />
+        </svg>
+    );
 }
 
-function SearchMembersModal({ modalProps, guildId }: { modalProps: RenderModalProps; guildId: string; }) {
+interface GlobalHit { m: FoundMember; guilds: string[]; }
+
+// Search every server you're in. Discord only hands a normal account the members it has loaded
+// (voice, opened member lists, cached), so this finds those across all your servers and shows
+// which server each match is in. Anyone not loaded is still reachable by their exact user ID.
+async function searchAllServers(query: string): Promise<GlobalHit[]> {
+    const raw = query.trim();
+    if (!raw) return [];
+    const byId = ID_RE.test(raw);
+    const lower = raw.toLowerCase();
+    const hits = new Map<string, GlobalHit>();
+    const guilds = GuildStore.getGuilds();
+
+    for (const gid in guilds) {
+        const gname = guilds[gid]?.name ?? "Unknown server";
+        for (const id of byId ? [raw] : localCandidateIds(gid)) {
+            const m = memberOf(gid, id);
+            if (!m) continue;
+            if (!byId && !(m.username.toLowerCase().includes(lower) || m.globalName?.toLowerCase().includes(lower) || m.nick?.toLowerCase().includes(lower))) continue;
+            const hit = hits.get(id) ?? { m, guilds: [] };
+            if (!hit.guilds.includes(gname)) hit.guilds.push(gname);
+            hits.set(id, hit);
+        }
+        if (hits.size >= 80) break;
+    }
+
+    // an ID you don't share a server with still resolves, so you can act on anyone
+    if (byId && !hits.has(raw)) {
+        try {
+            const u = await UserUtils.getUser(raw) as any;
+            if (u) hits.set(raw, { m: { id: u.id, username: u.username, globalName: u.globalName, avatar: u.avatar }, guilds: [] });
+        } catch { /* not a real user id */ }
+    }
+
+    return [...hits.values()];
+}
+
+function SearchMembersModal({ modalProps }: { modalProps: RenderModalProps; }) {
     const [query, setQuery] = useState("");
-    const [results, setResults] = useState<FoundMember[] | null>(null);
+    const [results, setResults] = useState<GlobalHit[] | null>(null);
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
@@ -585,59 +604,53 @@ function SearchMembersModal({ modalProps, guildId }: { modalProps: RenderModalPr
         // a slow older search must not overwrite the results of a newer one
         let stale = false;
         const timer = setTimeout(async () => {
-            const r = await searchGuildMembers(guildId, q);
+            const r = await searchAllServers(q);
             if (stale) return;
             setResults(r);
             setLoading(false);
         }, 300);
         return () => { stale = true; clearTimeout(timer); };
-    }, [query, guildId]);
+    }, [query]);
 
     const mention = (m: FoundMember) => {
         insertTextIntoChatInputBox(`<@${m.id}> `);
         modalProps.onClose();
-        toast(`Added @${m.nick ?? m.globalName ?? m.username} to the chat box`, "success");
+        toast(`Added @${m.globalName ?? m.username} to the chat box`, "success");
     };
 
     return (
-        <Modal {...modalProps} title="Search members" size="md">
-            <TextInput value={query} onChange={v => setQuery(inputText(v))} placeholder="Name of someone in voice, or any user ID…" autoFocus />
+        <Modal {...modalProps} title="Find members" subtitle="Across every server you're in" size="md">
+            <TextInput value={query} onChange={v => setQuery(inputText(v))} placeholder="Name or user ID…" autoFocus />
             {loading && <Text variant="text-sm/normal" style={{ marginTop: 8 }}>Searching…</Text>}
-            {!loading && results !== null && results.length === 0 && <Text variant="text-sm/normal" style={{ marginTop: 8 }}>No match. Name search covers people in this server's voice channels and its member list (open the members sidebar to load more) — for anyone else, paste their exact user ID.</Text>}
+            {!loading && results !== null && results.length === 0 && <Text variant="text-sm/normal" style={{ marginTop: 8 }}>No match. Name search covers people your client has loaded — voice channels and member lists you've opened — across your servers. Open a server's members sidebar to load more, or paste an exact user ID.</Text>}
             {!loading && results !== null && results.length > 0 && (
                 <table className="vc-qk-table" style={{ marginTop: 10 }}>
                     <thead>
                         <tr>
                             <th>User</th>
-                            <th>Username</th>
+                            <th>Server(s)</th>
                             <th>ID</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {results.map(m => (
+                        {results.map(({ m, guilds }) => (
                             <tr key={m.id}>
                                 <td>
                                     <div className="vc-qk-table-user">
-                                        <img
-                                            className="vc-qk-table-avatar"
-                                            src={apiAvatarUrl(m)}
-                                            alt=""
-                                            loading="lazy"
-                                            title="Click to view profile"
-                                            onClick={() => openUserProfile(m.id)}
-                                        />
-                                        <span className="vc-qk-table-link" title="Click to view profile" onClick={() => openUserProfile(m.id)}>
-                                            {m.nick ?? m.globalName ?? m.username}
-                                        </span>
+                                        <img className="vc-qk-table-avatar" src={apiAvatarUrl(m)} alt="" loading="lazy" title="Click to view profile" onClick={() => openUserProfile(m.id)} />
+                                        <div className="vc-qk-table-namecol">
+                                            <span className="vc-qk-table-link" title="Click to view profile" onClick={() => openUserProfile(m.id)}>{m.globalName ?? m.username}</span>
+                                            <span className="vc-quickkick-log-meta">@{m.username}</span>
+                                        </div>
                                     </div>
                                 </td>
-                                <td className="vc-quickkick-log-meta">@{m.username}</td>
+                                <td className="vc-quickkick-log-meta">{guilds.length ? guilds.join(", ") : "—"}</td>
                                 <td><span className="vc-quickkick-log-id" title="Click to mention them in the chat box" onClick={() => mention(m)}>{m.id}</span></td>
                                 <td>
                                     <div className="vc-qk-table-actions">
                                         <button className="vc-qk-table-action" onClick={() => mention(m)}>Mention</button>
-                                        <button className="vc-qk-table-action" onClick={() => openUserProfile(m.id)}>View profile</button>
+                                        <button className="vc-qk-table-action" onClick={() => openUserProfile(m.id)}>Profile</button>
                                     </div>
                                 </td>
                             </tr>
@@ -649,10 +662,19 @@ function SearchMembersModal({ modalProps, guildId }: { modalProps: RenderModalPr
     );
 }
 
+function FindMembersToolbarButton() {
+    return (
+        <HeaderBarIcon
+            className="vc-qk-toolbar-btn"
+            onClick={() => openSearchMembers()}
+            tooltip="Find members (all servers)"
+            icon={SearchGlassIcon}
+        />
+    );
+}
+
 function openSearchMembers() {
-    const guildId = currentGuildId();
-    if (!guildId) return toast("Join a voice channel in the server first", "failure");
-    openModal(p => <ErrorBoundary><SearchMembersModal modalProps={p} guildId={guildId} /></ErrorBoundary>);
+    openModal(p => <ErrorBoundary><SearchMembersModal modalProps={p} /></ErrorBoundary>);
 }
 
 // ---------- bulk kick / reject ----------
@@ -1292,6 +1314,14 @@ export default definePlugin({
                 match: /(?=\i\?\?\i\.\i\.getName\((\i)\),.{0,80}?#{intl::GUEST_NAME_SUFFIX})/,
                 replace: "$self.renderKickButton($1),"
             }
+        },
+        {
+            // add a Find-members icon to the top-right toolbar (near inbox / help)
+            find: '?"BACK_FORWARD_NAVIGATION":',
+            replacement: {
+                match: /(trailing:.{0,50}?)\i\.Fragment,(?=\{children:\[)/,
+                replace: "$1$self.SearchTrailing,"
+            }
         }
     ],
 
@@ -1314,6 +1344,17 @@ export default definePlugin({
             <ErrorBoundary noop key="vc-quickkick">
                 <KickButton user={user} />
             </ErrorBoundary>
+        );
+    },
+
+    SearchTrailing({ children }: React.PropsWithChildren) {
+        return (
+            <>
+                {children}
+                <ErrorBoundary key="vc-qk-find" noop>
+                    <FindMembersToolbarButton />
+                </ErrorBoundary>
+            </>
         );
     },
 
